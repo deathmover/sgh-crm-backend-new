@@ -1,0 +1,237 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  role      String   @default("super_admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Customer {
+  id            String               @id @default(cuid())
+  name          String
+  phone         String?              @unique
+  email         String?
+  notes         String?
+  pendingCredit Float                @default(0)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  entries       Entry[]
+  memberships   CustomerMembership[]
+
+  @@index([phone])
+  @@index([name])
+  @@map("customers")
+}
+
+model Machine {
+  id             String   @id @default(cuid())
+  name           String
+  type           String   // mid_pro | high_end | ultra | ps5 | simulator
+  units          Int      @default(1)
+  hourlyRate     Int
+  halfHourlyRate Int?
+  packageRates   Json?    // { "3": 130, "5": 200, "12": 500 } hours as keys
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  entries        Entry[]
+
+  @@index([type])
+  @@map("machines")
+}
+
+model Entry {
+  id                 String              @id @default(cuid())
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId         String
+  machine            Machine             @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  machineId          String
+  startTime          DateTime
+  endTime            DateTime?
+  predefinedDuration Int?                // Optional: Expected duration in minutes
+  duration           Int?                // Actual duration in minutes
+  roundedDuration    Int?                // For cost calculation
+  cost               Int?                // Auto-calculated
+  finalAmount        Int                 // Admin-adjusted
+  paymentType        String              @default("cash") // Deprecated - kept for backward compatibility
+  paymentStatus      String?             // null | not_paid | partial | paid - null means no payment recorded yet
+  cashAmount         Int                 @default(0) // Amount paid in cash
+  onlineAmount       Int                 @default(0) // Amount paid online
+  creditAmount       Int                 @default(0) // Amount in credit
+  pcNumber           String?             // PC/Machine unit number
+  beverages          Json?               // Beverages sold: { "item": "quantity" }
+  beveragesAmount    Int                 @default(0) // Total beverages cost
+  notes              String?
+  isDeleted          Boolean             @default(false) // Soft delete flag
+  deletedAt          DateTime?           // When it was deleted
+  autoEnded          Boolean             @default(false) // True if session was auto-ended
+  membershipId       String?             // Reference to membership used (if any)
+  membership         CustomerMembership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
+  membershipHours    Float?              // Hours deducted from membership (if used)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([customerId])
+  @@index([machineId])
+  @@index([createdAt])
+  @@index([paymentType])
+  @@index([paymentStatus])
+  @@index([isDeleted])
+  @@index([membershipId])
+  @@map("entries")
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String   // rent | electricity | internet | maintenance | salaries | inventory | other
+  amount      Float
+  description String?
+  date        DateTime
+  paymentMode String   @default("cash") // cash | online | card
+  receipt     String?  // Receipt file URL or reference
+  notes       String?
+  createdBy   String?  // User who created the expense
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([date])
+  @@map("expenses")
+}
+
+model BankAccount {
+  id              String           @id @default(cuid())
+  name            String           // "PhonePe Business - Bank 1", "PhonePe Business - Bank 2"
+  accountNumber   String?          // Last 4 digits for privacy
+  bankName        String?          // Bank name
+  type            String           @default("online") // online | cash_drawer | deposit_account
+  currentBalance  Float            @default(0)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  transactions    BankTransaction[]
+
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id              String      @id @default(cuid())
+  account         BankAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId       String
+  type            String      // credit | debit | transfer
+  amount          Float
+  category        String      // online_payment | cash_deposit | withdrawal | expense | opening_balance
+  description     String?
+  referenceId     String?     // Entry ID or Expense ID reference
+  referenceType   String?     // entry | expense | manual
+  date            DateTime    // Transaction date (for online payments, this is credit date)
+  balanceAfter    Float       // Balance after this transaction
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([accountId])
+  @@index([date])
+  @@index([category])
+  @@map("bank_transactions")
+}
+
+model CashDrawer {
+  id              String   @id @default(cuid())
+  date            DateTime // Date of the cash drawer session
+  openingBalance  Float    @default(0)
+  closingBalance  Float    @default(0)
+  totalCashIn     Float    @default(0) // Cash sales from entries
+  totalCashOut    Float    @default(0) // Cash expenses
+  depositAmount   Float    @default(0) // Amount separated for bank deposit
+  drawerAmount    Float    @default(0) // Amount kept in drawer
+  notes           String?
+  isClosed        Boolean  @default(false)
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([date])
+  @@map("cash_drawers")
+}
+
+// Membership System Models
+model MembershipPlan {
+  id                  String               @id @default(cuid())
+  name                String               // "Monthly 22 Hours", "Monthly 50 Hours", "Quarterly 100 Hours"
+  description         String?              // Additional details about the plan
+  price               Float                // ₹999, ₹1999, ₹3499
+  hours               Float                // 22, 50, 100
+  validityDays        Int                  // 30, 90
+  pricePerHour        Float                // Auto-calculated: ₹45, ₹40, ₹35
+  machineType         String               @default("mid_pro") // mid_pro | high_end | ultra | ps5 | simulator
+  isActive            Boolean              @default(true) // Can be disabled without deletion
+  displayOrder        Int                  @default(0) // For sorting in UI
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  customerMemberships CustomerMembership[]
+
+  @@index([isActive])
+  @@index([machineType])
+  @@map("membership_plans")
+}
+
+model CustomerMembership {
+  id               String         @id @default(cuid())
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId       String
+  plan             MembershipPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  planId           String
+  purchaseDate     DateTime       @default(now())
+  expiryDate       DateTime       // Auto-calculated based on validityDays
+  hoursTotal       Float          // Total hours purchased (copied from plan)
+  hoursRemaining   Float          // Hours left
+  hoursUsed        Float          @default(0) // Hours consumed
+  status           String         @default("active") // active | expired | exhausted | cancelled
+  paymentAmount    Float          // Amount paid for this membership
+  paymentMode      String         @default("cash") // cash | online
+  notes            String?
+  cancelledAt      DateTime?      // If membership was cancelled
+  cancelReason     String?        // Why it was cancelled
+  createdBy        String?        // Admin who created/sold this
+  entries          Entry[]        // Entries that used this membership
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([customerId])
+  @@index([planId])
+  @@index([status])
+  @@index([expiryDate])
+  @@map("customer_memberships")
+}
+
+// Feature flags for easy enable/disable
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique // "membership_enabled", "membership_auto_deduct", etc.
+  value     String   // "true" | "false" | JSON string
+  category  String   @default("general") // general | membership | payment | etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@map("system_settings")
+}

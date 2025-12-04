@@ -1,0 +1,31 @@
+services:
+  # PostgreSQL Database
+  - type: pserv
+    name: sgh-crm-db
+    plan: starter
+    region: oregon
+    databaseName: sgh_crm
+    databaseUser: sgh_crm_user
+
+  # Backend API
+  - type: web
+    name: sgh-crm-backend
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npx prisma migrate deploy && npm run start:prod
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sgh-crm-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: PORT
+        value: 3000

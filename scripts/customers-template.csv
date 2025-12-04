@@ -1,0 +1,5 @@
+name,phone,email,creditAmount,notes
+Rajesh Kumar,9876543210,rajesh@example.com,500,Regular customer
+Priya Sharma,9876543211,,1000,VIP customer
+Amit Patel,9876543212,amit@example.com,0,New customer
+Sunita Verma,9876543213,,750,Frequent visitor
