@@ -24,7 +24,7 @@
     "prisma:studio": "prisma studio"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "node -r tsconfig-paths/register -r ts-node/register prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.0",

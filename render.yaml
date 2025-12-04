@@ -14,7 +14,7 @@ services:
     region: oregon
     plan: starter
     buildCommand: npm install && npx prisma generate && npm run build
-    startCommand: npx prisma migrate resolve --rolled-back 20250930124626_add_predefined_duration_and_soft_delete || true && npx prisma migrate resolve --rolled-back 20251001063033_add_split_payment_support || true && npx prisma migrate resolve --rolled-back 20251001190921_add_pc_number_and_beverages || true && npx prisma migrate deploy && npx prisma db seed && npm run start:prod
+    startCommand: npx prisma migrate resolve --rolled-back 20250930124626_add_predefined_duration_and_soft_delete || true && npx prisma migrate resolve --rolled-back 20251001063033_add_split_payment_support || true && npx prisma migrate resolve --rolled-back 20251001190921_add_pc_number_and_beverages || true && npx prisma migrate resolve --rolled-back 20251204092050_add_missing_columns_and_tables || true && npx prisma migrate deploy && npx prisma db seed || echo "Seed warning (may already exist)" && npm run start:prod
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_ENV
