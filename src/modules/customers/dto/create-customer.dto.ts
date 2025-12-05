@@ -5,6 +5,8 @@ import {
   IsOptional,
   IsEmail,
   Matches,
+  IsNumber,
+  Min,
 } from 'class-validator';
 
 export class CreateCustomerDto {
@@ -25,4 +27,15 @@ export class CreateCustomerDto {
   @IsEmail()
   @IsOptional()
   email?: string;
+
+  @ApiPropertyOptional({ example: 0, description: 'Initial credit balance for the customer' })
+  @IsNumber()
+  @IsOptional()
+  @Min(0, { message: 'Pending credit must be a positive number' })
+  pendingCredit?: number;
+
+  @ApiPropertyOptional({ example: 'VIP customer', description: 'Additional notes about the customer' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
