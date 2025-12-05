@@ -7,7 +7,10 @@ import {
   Param,
   Delete,
   Query,
+  Res,
+  Header,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { EntriesService } from './entries.service';
 import { CreateEntryDto } from './dto/create-entry.dto';
@@ -26,6 +29,15 @@ export class EntriesController {
   @ApiOperation({ summary: 'Create a new entry (start timer)' })
   create(@Body() createEntryDto: CreateEntryDto) {
     return this.entriesService.create(createEntryDto);
+  }
+
+  @Get('export/csv')
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="daily-sheet.csv"')
+  @ApiOperation({ summary: 'Export entries as CSV' })
+  async exportCsv(@Query() query: EntryQueryDto, @Res() res: Response) {
+    const csv = await this.entriesService.exportToCsv(query);
+    res.send(csv);
   }
 
   @Get()

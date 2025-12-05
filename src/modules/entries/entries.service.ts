@@ -6,6 +6,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { Parser } from 'json2csv';
 import { PrismaService } from '../../config/database.config';
 import { MachinesService } from '../machines/machines.service';
 import { MembershipsService } from '../memberships/memberships.service';
@@ -765,6 +766,112 @@ export class EntriesService {
         },
       },
     });
+  }
+
+  async exportToCsv(query: EntryQueryDto): Promise<string> {
+    const {
+      date,
+      startDate,
+      endDate,
+      customerId,
+      machineId,
+      paymentType,
+    } = query;
+
+    const where: any = { isDeleted: false };
+
+    // Date filtering
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      where.createdAt = {
+        gte: startOfDay,
+        lte: endOfDay,
+      };
+    } else if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+      };
+    }
+
+    if (customerId) where.customerId = customerId;
+    if (machineId) where.machineId = machineId;
+    if (paymentType) where.paymentType = paymentType;
+
+    // Get all entries (no pagination for export)
+    const entries = await this.prisma.entry.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        customer: {
+          select: { name: true, phone: true },
+        },
+        machine: {
+          select: { name: true, type: true },
+        },
+        membership: {
+          select: {
+            plan: {
+              select: { name: true },
+            },
+          },
+        },
+      },
+    });
+
+    // Format entries for CSV
+    const formattedEntries = entries.map((entry) => ({
+      'Customer Name': entry.customer?.name || '',
+      'Customer Phone': entry.customer?.phone || '',
+      'Machine': entry.machine?.name || '',
+      'Machine Type': entry.machine?.type || '',
+      'Start Time': entry.startTime.toISOString(),
+      'End Time': entry.endTime ? entry.endTime.toISOString() : 'Active',
+      'Duration (min)': entry.duration || '',
+      'PC/Unit Number': entry.pcNumber || '',
+      'Cost': entry.cost || 0,
+      'Beverages': entry.beveragesAmount || 0,
+      'Final Amount': entry.finalAmount,
+      'Cash Amount': entry.cashAmount,
+      'Online Amount': entry.onlineAmount,
+      'Credit Amount': entry.creditAmount,
+      'Payment Status': entry.paymentStatus || '',
+      'Membership': entry.membership?.plan?.name || '',
+      'Membership Hours': entry.membershipHours || '',
+      'Auto Ended': entry.autoEnded ? 'Yes' : 'No',
+      'Notes': entry.notes || '',
+    }));
+
+    // Convert to CSV
+    const parser = new Parser({
+      fields: [
+        'Customer Name',
+        'Customer Phone',
+        'Machine',
+        'Machine Type',
+        'Start Time',
+        'End Time',
+        'Duration (min)',
+        'PC/Unit Number',
+        'Cost',
+        'Beverages',
+        'Final Amount',
+        'Cash Amount',
+        'Online Amount',
+        'Credit Amount',
+        'Payment Status',
+        'Membership',
+        'Membership Hours',
+        'Auto Ended',
+        'Notes',
+      ],
+    });
+
+    return parser.parse(formattedEntries);
   }
 
   async autoEndExpiredSessions() {

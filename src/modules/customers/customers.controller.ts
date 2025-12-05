@@ -7,8 +7,11 @@ import {
   Param,
   Delete,
   Query,
+  Res,
+  Header,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Response } from 'express';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -31,6 +34,15 @@ export class CustomersController {
   @ApiOperation({ summary: 'Bulk import customers from Excel/CSV data' })
   bulkImport(@Body() bulkImportDto: BulkImportCustomersDto) {
     return this.customersService.bulkImport(bulkImportDto.customers);
+  }
+
+  @Get('export/csv')
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="customers.csv"')
+  @ApiOperation({ summary: 'Export all customers as CSV' })
+  async exportCsv(@Query() query: CustomerQueryDto, @Res() res: Response) {
+    const csv = await this.customersService.exportToCsv(query);
+    res.send(csv);
   }
 
   @Get()

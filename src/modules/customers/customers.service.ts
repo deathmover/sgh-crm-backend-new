@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
+import { Parser } from 'json2csv';
 import { PrismaService } from '../../config/database.config';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -278,6 +279,68 @@ export class CustomersService {
       customerCreditPaid: (customer.pendingCredit || 0) - updatedCustomerCredit,
       newCustomerCredit: updatedCustomerCredit,
     };
+  }
+
+  async exportToCsv(query: CustomerQueryDto): Promise<string> {
+    const { search } = query;
+
+    const where = search
+      ? {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' as const } },
+            { phone: { contains: search, mode: 'insensitive' as const } },
+            { email: { contains: search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {};
+
+    // Get all customers (no pagination for export)
+    const customers = await this.prisma.customer.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: { entries: true },
+        },
+      },
+    });
+
+    // Calculate total spent for each customer
+    const customersWithStats = await Promise.all(
+      customers.map(async (customer) => {
+        const stats = await this.prisma.entry.aggregate({
+          where: { customerId: customer.id, isDeleted: false },
+          _sum: { finalAmount: true },
+        });
+
+        return {
+          Name: customer.name,
+          Phone: customer.phone || '',
+          Email: customer.email || '',
+          'Pending Credit': customer.pendingCredit,
+          'Total Visits': customer._count.entries,
+          'Total Spent': stats._sum.finalAmount || 0,
+          Notes: customer.notes || '',
+          'Created At': customer.createdAt.toISOString(),
+        };
+      }),
+    );
+
+    // Convert to CSV
+    const parser = new Parser({
+      fields: [
+        'Name',
+        'Phone',
+        'Email',
+        'Pending Credit',
+        'Total Visits',
+        'Total Spent',
+        'Notes',
+        'Created At',
+      ],
+    });
+
+    return parser.parse(customersWithStats);
   }
 
   async bulkImport(customers: Array<{
