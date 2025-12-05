@@ -180,8 +180,15 @@ export class CustomersService {
     customerId: string,
     paymentDto: { cashAmount: number; onlineAmount: number },
   ) {
-    // Verify customer exists
-    await this.findOne(customerId);
+    // Get customer with current pending credit
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, pendingCredit: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
 
     const { cashAmount, onlineAmount } = paymentDto;
     const totalPayment = cashAmount + onlineAmount;
@@ -201,14 +208,15 @@ export class CustomersService {
       orderBy: { endTime: 'asc' }, // Pay off oldest debts first
     });
 
-    if (unpaidEntries.length === 0) {
+    // Check if customer has any pending credit (either from entries or customer balance)
+    if (unpaidEntries.length === 0 && (customer.pendingCredit || 0) <= 0) {
       throw new ConflictException('Customer has no pending credit');
     }
 
     let remainingPayment = totalPayment;
     const updatedEntries: any[] = [];
 
-    // Distribute payment across unpaid entries
+    // First, pay off entry-based credits (from gaming sessions)
     for (const entry of unpaidEntries) {
       if (remainingPayment <= 0) break;
 
@@ -245,11 +253,30 @@ export class CustomersService {
       remainingPayment -= paymentForEntry;
     }
 
+    // Second, if there's remaining payment, apply it to customer's pending credit
+    let updatedCustomerCredit = customer.pendingCredit || 0;
+    if (remainingPayment > 0 && updatedCustomerCredit > 0) {
+      const paymentForCustomerCredit = Math.min(
+        remainingPayment,
+        updatedCustomerCredit,
+      );
+      updatedCustomerCredit -= paymentForCustomerCredit;
+      remainingPayment -= paymentForCustomerCredit;
+
+      // Update customer's pending credit
+      await this.prisma.customer.update({
+        where: { id: customerId },
+        data: { pendingCredit: updatedCustomerCredit },
+      });
+    }
+
     return {
       success: true,
       totalPayment,
       entriesUpdated: updatedEntries.length,
       remainingCredit: remainingPayment,
+      customerCreditPaid: (customer.pendingCredit || 0) - updatedCustomerCredit,
+      newCustomerCredit: updatedCustomerCredit,
     };
   }
 
