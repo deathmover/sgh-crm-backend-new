@@ -376,45 +376,19 @@ export class CustomersService {
           continue;
         }
 
-        // Create customer
-        const customer = await this.prisma.customer.create({
+        // Create customer with pending credit if specified
+        await this.prisma.customer.create({
           data: {
             name: customerData.name,
             phone: customerData.phone,
             email: customerData.email,
             notes: customerData.notes,
+            pendingCredit:
+              customerData.creditAmount && customerData.creditAmount > 0
+                ? customerData.creditAmount
+                : 0,
           },
         });
-
-        // If customer has initial credit amount, create a credit entry
-        if (customerData.creditAmount && customerData.creditAmount > 0) {
-          // Find any active machine (we need a machine ID for the entry)
-          const machine = await this.prisma.machine.findFirst({
-            where: { isActive: true },
-          });
-
-          if (machine) {
-            // Create a past entry with credit amount to reflect historical credit
-            await this.prisma.entry.create({
-              data: {
-                customerId: customer.id,
-                machineId: machine.id,
-                startTime: new Date(),
-                endTime: new Date(),
-                predefinedDuration: 0,
-                duration: 0,
-                cost: customerData.creditAmount,
-                finalAmount: customerData.creditAmount,
-                paymentType: 'credit',
-                creditAmount: customerData.creditAmount,
-                cashAmount: 0,
-                onlineAmount: 0,
-                paymentStatus: 'unpaid',
-                notes: 'Initial credit from import',
-              },
-            });
-          }
-        }
 
         results.success++;
       } catch (error) {
