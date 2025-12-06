@@ -443,39 +443,71 @@ export class CustomersService {
         throw new BadRequestException('Unsupported file format');
       }
 
-      // Validate and normalize customer data
-      const normalizedCustomers = customers.map((row, index) => {
+      // Validate and normalize customer data, collecting errors instead of throwing
+      const normalizedCustomers: any[] = [];
+      const validationErrors: Array<{ name: string; phone: string; error: string }> = [];
+
+      customers.forEach((row, index) => {
         const name = row.name || row.Name || row.NAME;
         const phone = row.phone || row.Phone || row.PHONE;
         const email = row.email || row.Email || row.EMAIL || undefined;
         const creditAmount = row.creditAmount || row['Credit Amount'] || row.CREDIT_AMOUNT || 0;
         const notes = row.notes || row.Notes || row.NOTES || undefined;
 
+        // Skip completely empty rows
+        if (!name && !phone && !email && !creditAmount && !notes) {
+          return; // Skip this row
+        }
+
+        // Validate required fields
         if (!name || !phone) {
-          throw new BadRequestException(
-            `Row ${index + 2}: Name and Phone are required fields`,
-          );
+          validationErrors.push({
+            name: name || 'Unknown',
+            phone: phone || 'Missing',
+            error: `Row ${index + 2}: Name and Phone are required fields`,
+          });
+          return; // Skip this row
         }
 
         // Validate phone number (basic validation)
         const phoneStr = String(phone).trim();
         if (phoneStr.length < 10) {
-          throw new BadRequestException(
-            `Row ${index + 2}: Invalid phone number "${phoneStr}"`,
-          );
+          validationErrors.push({
+            name: String(name).trim(),
+            phone: phoneStr,
+            error: `Row ${index + 2}: Invalid phone number (minimum 10 digits required)`,
+          });
+          return; // Skip this row
         }
 
-        return {
+        // Add to normalized customers if valid
+        normalizedCustomers.push({
           name: String(name).trim(),
           phone: phoneStr,
           email: email ? String(email).trim() : undefined,
           creditAmount: creditAmount ? Number(creditAmount) : 0,
           notes: notes ? String(notes).trim() : undefined,
-        };
+        });
       });
 
-      // Use existing bulkImport method
-      return this.bulkImport(normalizedCustomers);
+      // If no valid customers found, return error result
+      if (normalizedCustomers.length === 0 && validationErrors.length > 0) {
+        return {
+          success: 0,
+          failed: validationErrors.length,
+          errors: validationErrors,
+        };
+      }
+
+      // Import valid customers using existing bulkImport method
+      const importResult = await this.bulkImport(normalizedCustomers);
+
+      // Combine validation errors with import errors
+      return {
+        success: importResult.success,
+        failed: importResult.failed + validationErrors.length,
+        errors: [...validationErrors, ...importResult.errors],
+      };
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
