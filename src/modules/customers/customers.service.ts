@@ -2,8 +2,11 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { Parser } from 'json2csv';
+import * as XLSX from 'xlsx';
+import { Readable } from 'stream';
 import { PrismaService } from '../../config/database.config';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -425,5 +428,159 @@ export class CustomersService {
     }
 
     return results;
+  }
+
+  async importFromFile(file: Express.Multer.File) {
+    const fileExtension = file.originalname.split('.').pop()?.toLowerCase();
+    let customers: any[] = [];
+
+    try {
+      if (fileExtension === 'csv') {
+        customers = await this.parseCsvFile(file.buffer);
+      } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+        customers = this.parseExcelFile(file.buffer);
+      } else {
+        throw new BadRequestException('Unsupported file format');
+      }
+
+      // Validate and normalize customer data
+      const normalizedCustomers = customers.map((row, index) => {
+        const name = row.name || row.Name || row.NAME;
+        const phone = row.phone || row.Phone || row.PHONE;
+        const email = row.email || row.Email || row.EMAIL || undefined;
+        const creditAmount = row.creditAmount || row['Credit Amount'] || row.CREDIT_AMOUNT || 0;
+        const notes = row.notes || row.Notes || row.NOTES || undefined;
+
+        if (!name || !phone) {
+          throw new BadRequestException(
+            `Row ${index + 2}: Name and Phone are required fields`,
+          );
+        }
+
+        // Validate phone number (basic validation)
+        const phoneStr = String(phone).trim();
+        if (phoneStr.length < 10) {
+          throw new BadRequestException(
+            `Row ${index + 2}: Invalid phone number "${phoneStr}"`,
+          );
+        }
+
+        return {
+          name: String(name).trim(),
+          phone: phoneStr,
+          email: email ? String(email).trim() : undefined,
+          creditAmount: creditAmount ? Number(creditAmount) : 0,
+          notes: notes ? String(notes).trim() : undefined,
+        };
+      });
+
+      // Use existing bulkImport method
+      return this.bulkImport(normalizedCustomers);
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error parsing file: ${error.message}`,
+      );
+    }
+  }
+
+  private async parseCsvFile(buffer: Buffer): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const results: any[] = [];
+      const stream = Readable.from(buffer);
+      const csvParser = require('csv-parser');
+
+      stream
+        .pipe(csvParser())
+        .on('data', (data) => results.push(data))
+        .on('end', () => resolve(results))
+        .on('error', (error) => reject(error));
+    });
+  }
+
+  private parseExcelFile(buffer: Buffer): any[] {
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    if (data.length === 0) {
+      throw new BadRequestException('Excel file is empty');
+    }
+
+    return data;
+  }
+
+  generateSampleCsv(): string {
+    const sampleData = [
+      {
+        name: 'John Doe',
+        phone: '9876543210',
+        email: 'john@example.com',
+        creditAmount: 0,
+        notes: 'VIP Customer',
+      },
+      {
+        name: 'Jane Smith',
+        phone: '9123456789',
+        email: 'jane@example.com',
+        creditAmount: 500,
+        notes: 'Regular customer with initial credit',
+      },
+      {
+        name: 'Bob Wilson',
+        phone: '9988776655',
+        email: '',
+        creditAmount: 0,
+        notes: '',
+      },
+    ];
+
+    const parser = new Parser({
+      fields: [
+        { label: 'name', value: 'name' },
+        { label: 'phone', value: 'phone' },
+        { label: 'email', value: 'email' },
+        { label: 'creditAmount', value: 'creditAmount' },
+        { label: 'notes', value: 'notes' },
+      ],
+    });
+
+    return parser.parse(sampleData);
+  }
+
+  async generateSampleExcel(): Promise<Buffer> {
+    const sampleData = [
+      {
+        name: 'John Doe',
+        phone: '9876543210',
+        email: 'john@example.com',
+        creditAmount: 0,
+        notes: 'VIP Customer',
+      },
+      {
+        name: 'Jane Smith',
+        phone: '9123456789',
+        email: 'jane@example.com',
+        creditAmount: 500,
+        notes: 'Regular customer with initial credit',
+      },
+      {
+        name: 'Bob Wilson',
+        phone: '9988776655',
+        email: '',
+        creditAmount: 0,
+        notes: '',
+      },
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(sampleData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Customers');
+
+    // Generate buffer
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   }
 }
