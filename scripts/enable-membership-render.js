@@ -1,7 +1,12 @@
 const { PrismaClient } = require('@prisma/client');
 
-// Render production database URL
-const DATABASE_URL = 'postgresql://sghcrm_user:1zCyM7wKtY77frjxpAffYGuMchCLXPwv@dpg-d4ojnsi4i8rc73f5vsc0-a.oregon-postgres.render.com/sghcrm';
+// Use DATABASE_URL from environment variable
+const DATABASE_URL = process.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+  console.error('❌ DATABASE_URL environment variable is not set');
+  process.exit(1);
+}
 
 const prisma = new PrismaClient({
   datasourceUrl: DATABASE_URL
