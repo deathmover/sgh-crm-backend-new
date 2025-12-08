@@ -597,10 +597,49 @@ export class EntriesService {
   async update(id: string, updateData: any) {
     const entry = await this.findOne(id);
 
+    // Prepare the data to update
+    const dataToUpdate = { ...updateData };
+
+    // If predefinedDuration is being updated, recalculate cost
+    if (updateData.predefinedDuration !== undefined) {
+      const machineId = updateData.machineId || entry.machineId;
+      const predefinedDuration = updateData.predefinedDuration;
+      const pcNumber = updateData.pcNumber || entry.pcNumber;
+
+      if (predefinedDuration && predefinedDuration > 0) {
+        const roundedDuration = this.machinesService.roundDuration(predefinedDuration);
+        let calculatedCost = await this.machinesService.calculateCost(
+          machineId,
+          roundedDuration,
+        );
+
+        // For PS5 machines, multiply by number of controllers
+        const machine = await this.prisma.machine.findUnique({
+          where: { id: machineId },
+        });
+
+        if (machine && machine.type === 'ps5' && pcNumber) {
+          const controllers = parseInt(pcNumber) || 1;
+          calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
+        }
+
+        dataToUpdate.cost = calculatedCost;
+        dataToUpdate.roundedDuration = roundedDuration;
+
+        // If finalAmount is not explicitly provided, calculate it
+        if (updateData.finalAmount === undefined) {
+          const beveragesAmount = updateData.beveragesAmount !== undefined
+            ? updateData.beveragesAmount
+            : entry.beveragesAmount || 0;
+          dataToUpdate.finalAmount = calculatedCost + beveragesAmount;
+        }
+      }
+    }
+
     // Allow updating ended entries (for PC number, beverages, notes, payment)
     return this.prisma.entry.update({
       where: { id },
-      data: updateData,
+      data: dataToUpdate,
       include: {
         customer: {
           select: { id: true, name: true, phone: true },
