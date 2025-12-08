@@ -497,7 +497,7 @@ export class EntriesService {
       where: dateFilter,
       include: {
         customer: {
-          select: { id: true, name: true, phone: true },
+          select: { id: true, name: true, phone: true, pendingCredit: true },
         },
         machine: {
           select: {
@@ -515,35 +515,6 @@ export class EntriesService {
         { createdAt: 'desc' }, // Then sort by creation time
       ],
     });
-
-    // Calculate pending credit for each unique customer (sum of all creditAmount)
-    const uniqueCustomerIds = [...new Set(entries.map(e => e.customerId))];
-    const customerCredits = await Promise.all(
-      uniqueCustomerIds.map(async (customerId) => {
-        const creditData = await this.prisma.entry.aggregate({
-          where: {
-            customerId,
-            endTime: { not: null },
-            isDeleted: false,
-          },
-          _sum: { creditAmount: true },
-        });
-
-        return {
-          customerId,
-          pendingCredit: creditData._sum.creditAmount || 0,
-        };
-      })
-    );
-
-    // Add pending credit to customer data
-    const entriesWithCredit = entries.map(entry => ({
-      ...entry,
-      customer: entry.customer ? {
-        ...entry.customer,
-        pendingCredit: customerCredits.find(c => c.customerId === entry.customerId)?.pendingCredit || 0,
-      } : null,
-    }));
 
     // Get all entries (including active)
     const totalEntries = entries.length;
@@ -582,7 +553,7 @@ export class EntriesService {
     const totalRevenue = cashRevenue + onlineRevenue;
 
     return {
-      entries: entriesWithCredit,
+      entries,
       summary: {
         totalRevenue,
         cashRevenue,

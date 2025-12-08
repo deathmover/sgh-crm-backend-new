@@ -463,7 +463,10 @@ export class AnalyticsService {
     }
 
     entries.forEach((entry) => {
-      const hour = new Date(entry.startTime).getHours();
+      // Convert to IST (UTC+5:30)
+      const utcDate = new Date(entry.startTime);
+      const istDate = new Date(utcDate.getTime() + (5.5 * 60 * 60 * 1000));
+      const hour = istDate.getUTCHours();
       const data = hourlyData.get(hour)!;
       data.sessions += 1;
       data.revenue += entry.finalAmount || 0;
