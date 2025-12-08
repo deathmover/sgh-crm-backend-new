@@ -67,8 +67,30 @@ export class CustomersService {
       this.prisma.customer.count({ where }),
     ]);
 
+    // Calculate total pending credit (Manual + Entry-based)
+    const customersWithCredit = await Promise.all(
+      customers.map(async (customer) => {
+        const entryStats = await this.prisma.entry.aggregate({
+          where: {
+            customerId: customer.id,
+            creditAmount: { gt: 0 },
+            isDeleted: false,
+          },
+          _sum: { creditAmount: true },
+        });
+
+        const entryCredit = entryStats._sum.creditAmount || 0;
+        const totalCredit = (customer.pendingCredit || 0) + entryCredit;
+
+        return {
+          ...customer,
+          pendingCredit: totalCredit,
+        };
+      }),
+    );
+
     return {
-      data: customers,
+      data: customersWithCredit,
       meta: {
         total,
         page,
@@ -162,6 +184,7 @@ export class CustomersService {
       _sum: {
         finalAmount: true,
         duration: true,
+        creditAmount: true,
       },
       _count: true,
     });
@@ -172,10 +195,12 @@ export class CustomersService {
       select: { createdAt: true },
     });
 
+    const totalCredit = (customer.pendingCredit || 0) + (stats._sum.creditAmount || 0);
+
     return {
       totalVisits: stats._count,
       totalSpent: stats._sum.finalAmount || 0,
-      pendingCredit: customer.pendingCredit,
+      pendingCredit: totalCredit,
       lastVisit: lastEntry?.createdAt?.toISOString(),
     };
   }

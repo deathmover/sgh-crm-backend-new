@@ -598,6 +598,46 @@ export class EntriesService {
       }
     }
 
+    // Auto-calculate payment status if amounts are changed
+    const effectiveFinalAmount =
+      dataToUpdate.finalAmount !== undefined
+        ? dataToUpdate.finalAmount
+        : entry.finalAmount;
+
+    const effectiveCash =
+      dataToUpdate.cashAmount !== undefined
+        ? dataToUpdate.cashAmount
+        : entry.cashAmount;
+    const effectiveOnline =
+      dataToUpdate.onlineAmount !== undefined
+        ? dataToUpdate.onlineAmount
+        : entry.onlineAmount;
+    const effectiveCredit =
+      dataToUpdate.creditAmount !== undefined
+        ? dataToUpdate.creditAmount
+        : entry.creditAmount;
+
+    // Check if we need to update status (if any of these changed or if status is currently unpaid/partial)
+    const amountsChanged =
+      dataToUpdate.cashAmount !== undefined ||
+      dataToUpdate.onlineAmount !== undefined ||
+      dataToUpdate.creditAmount !== undefined ||
+      dataToUpdate.finalAmount !== undefined ||
+      updateData.predefinedDuration !== undefined;
+
+    if (amountsChanged && effectiveFinalAmount !== undefined) {
+      const totalPaid = effectiveCash + effectiveOnline + effectiveCredit;
+
+      let paymentStatus = 'unpaid';
+      if (totalPaid >= effectiveFinalAmount) {
+        paymentStatus = 'paid';
+      } else if (totalPaid > 0) {
+        paymentStatus = 'partial';
+      }
+
+      dataToUpdate.paymentStatus = paymentStatus;
+    }
+
     // Allow updating ended entries (for PC number, beverages, notes, payment)
     return this.prisma.entry.update({
       where: { id },
