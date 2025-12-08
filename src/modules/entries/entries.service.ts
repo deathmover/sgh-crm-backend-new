@@ -502,10 +502,9 @@ export class EntriesService {
           },
         },
       },
-      orderBy: [
-        { endTime: 'asc' }, // Active sessions (endTime: null) come first
-        { createdAt: 'desc' }, // Then sort by creation time
-      ],
+      orderBy: {
+        startTime: 'asc', // Sort by start time ascending (earliest first)
+      },
     });
 
     // Get all entries (including active)
@@ -886,8 +885,6 @@ export class EntriesService {
       include: { machine: true, customer: true },
     });
 
-    console.log(`📋 Found ${expiredEntries.length} active entries with predefined duration`);
-
     const entriesToEnd = expiredEntries.filter((entry) => {
       if (!entry.predefinedDuration) return false;
       const expectedEnd = new Date(entry.startTime);
@@ -896,20 +893,8 @@ export class EntriesService {
       );
       const isExpired = now >= expectedEnd;
 
-      if (isExpired) {
-        console.log(`⏰ Entry ${entry.id} expired:`, {
-          customer: entry.customer.name,
-          startTime: entry.startTime.toISOString(),
-          expectedEnd: expectedEnd.toISOString(),
-          currentTime: now.toISOString(),
-          duration: entry.predefinedDuration,
-        });
-      }
-
       return isExpired;
     });
-
-    console.log(`🎯 ${entriesToEnd.length} entries need to be auto-ended`);
 
     const results: any[] = [];
     for (const entry of entriesToEnd) {
@@ -952,15 +937,8 @@ export class EntriesService {
         );
 
         results.push(ended);
-        console.log(
-          `✅ Auto-ended entry ${entry.id} for customer ${entry.customer.name}`,
-          `- Start: ${entry.startTime.toISOString()}`,
-          `- Expected End: ${expectedEnd.toISOString()}`,
-          `- Duration: ${entry.predefinedDuration} min`,
-          `- Amount: ₹${ended.finalAmount}`,
-        );
       } catch (error) {
-        console.error(`Failed to auto-end entry ${entry.id}:`, error);
+        // Silently handle individual entry failures
       }
     }
 
@@ -969,17 +947,10 @@ export class EntriesService {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async handleAutoEndCron() {
-    const now = new Date();
-    console.log(`\n🕐 [${now.toISOString()}] Running auto-end check for expired sessions...`);
     try {
-      const ended = await this.autoEndExpiredSessions();
-      if (ended.length > 0) {
-        console.log(`✅ Auto-ended ${ended.length} expired session(s)`);
-      } else {
-        console.log('ℹ️  No expired sessions found');
-      }
+      await this.autoEndExpiredSessions();
     } catch (error) {
-      console.error('❌ Error in auto-end cron:', error);
+      // Silently handle cron errors
     }
   }
 }
