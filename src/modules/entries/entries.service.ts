@@ -270,26 +270,18 @@ export class EntriesService {
     cashAmount += endEntryDto.cashAmount || 0;
     onlineAmount += endEntryDto.onlineAmount || 0;
 
-    // Calculate total actually paid (cash + online only)
-    const totalActuallyPaid = cashAmount + onlineAmount;
-
-    // Calculate remaining amount that goes to credit
-    const remainingAmount = Math.max(0, finalAmount - totalActuallyPaid);
-
-    // Add new credit amount to existing credit
+    // Only add to credit if user explicitly provides creditAmount
     const newCreditAmount = endEntryDto.creditAmount || 0;
     creditAmount += newCreditAmount;
 
-    // If there's unpaid amount and user didn't explicitly pay via credit, add to credit
-    if (remainingAmount > 0 && newCreditAmount === 0) {
-      creditAmount += remainingAmount;
-    }
+    // Calculate total actually paid (cash + online + explicit credit)
+    const totalPaid = cashAmount + onlineAmount + creditAmount;
 
-    // Calculate payment status based on actual paid amount (not including credit)
+    // Calculate payment status
     let paymentStatus = 'unpaid';
-    if (totalActuallyPaid >= finalAmount) {
+    if (totalPaid >= finalAmount) {
       paymentStatus = 'paid';
-    } else if (totalActuallyPaid > 0 || creditAmount > 0) {
+    } else if (totalPaid > 0) {
       paymentStatus = 'partial';
     }
 
@@ -733,19 +725,17 @@ export class EntriesService {
   async updatePayment(id: string, updatePaymentDto: UpdatePaymentDto) {
     const entry = await this.findOne(id);
 
-    // Calculate total actually paid (cash + online only, not credit)
-    const totalActuallyPaid =
+    // Calculate total paid (cash + online + explicit credit)
+    const totalPaid =
       updatePaymentDto.cashAmount +
-      updatePaymentDto.onlineAmount;
-
-    // Calculate remaining amount that goes to credit
-    const remainingAmount = Math.max(0, entry.finalAmount - totalActuallyPaid);
+      updatePaymentDto.onlineAmount +
+      updatePaymentDto.creditAmount;
 
     // Calculate payment status
     let paymentStatus: string;
-    if (totalActuallyPaid >= entry.finalAmount) {
+    if (totalPaid >= entry.finalAmount) {
       paymentStatus = 'paid';
-    } else if (totalActuallyPaid > 0) {
+    } else if (totalPaid > 0) {
       paymentStatus = 'partial';
     } else {
       paymentStatus = 'unpaid';
@@ -756,7 +746,7 @@ export class EntriesService {
       data: {
         cashAmount: updatePaymentDto.cashAmount,
         onlineAmount: updatePaymentDto.onlineAmount,
-        creditAmount: remainingAmount, // Auto-calculate credit based on unpaid amount
+        creditAmount: updatePaymentDto.creditAmount, // Use explicit credit amount from user
         paymentStatus,
         notes: updatePaymentDto.notes || entry.notes,
       },
