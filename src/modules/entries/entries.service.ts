@@ -599,6 +599,14 @@ export class EntriesService {
 
         dataToUpdate.cost = calculatedCost;
         dataToUpdate.roundedDuration = roundedDuration;
+        dataToUpdate.duration = predefinedDuration; // Update actual duration field
+
+        // If session has ended, recalculate endTime based on new duration
+        if (entry.endTime && entry.startTime) {
+          const newEndTime = new Date(entry.startTime);
+          newEndTime.setMinutes(newEndTime.getMinutes() + predefinedDuration);
+          dataToUpdate.endTime = newEndTime;
+        }
 
         // If finalAmount is not explicitly provided, calculate it
         if (updateData.finalAmount === undefined) {
