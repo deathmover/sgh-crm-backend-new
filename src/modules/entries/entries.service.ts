@@ -503,7 +503,7 @@ export class EntriesService {
         },
       },
       orderBy: {
-        startTime: 'asc', // Sort by start time ascending (earliest first)
+        startTime: 'desc', // Sort by start time ascending (earliest first)
       },
     });
 
