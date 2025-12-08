@@ -935,16 +935,14 @@ export class EntriesService {
           calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
         }
 
-        // Calculate final amount including beverages
-        const beveragesAmount = entry.beveragesAmount || 0;
-        const finalAmount = calculatedCost + beveragesAmount;
-
+        // Pass only the play amount (calculatedCost)
+        // endEntry will add beverages automatically from entry.beveragesAmount
         const ended = await this.endEntry(
           entry.id,
           {
             endTime: expectedEnd.toISOString(),
             paymentType: 'credit', // Legacy field
-            finalAmount,
+            finalAmount: calculatedCost, // Only pass play amount, not including beverages
             cashAmount: 0,
             onlineAmount: 0,
             creditAmount: 0, // Don't pass creditAmount, let endEntry calculate it
@@ -959,7 +957,7 @@ export class EntriesService {
           `- Start: ${entry.startTime.toISOString()}`,
           `- Expected End: ${expectedEnd.toISOString()}`,
           `- Duration: ${entry.predefinedDuration} min`,
-          `- Amount: ₹${finalAmount} (added to credit)`,
+          `- Amount: ₹${ended.finalAmount}`,
         );
       } catch (error) {
         console.error(`Failed to auto-end entry ${entry.id}:`, error);
