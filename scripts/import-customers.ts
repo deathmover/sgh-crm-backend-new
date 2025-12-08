@@ -27,9 +27,7 @@ async function importCustomers() {
 
   if (!fs.existsSync(csvPath)) {
     console.error('❌ customers.csv not found!');
-    console.log('📝 Create a CSV file with format:');
-    console.log('   name,phone,email,creditAmount,notes');
-    console.log('   John Doe,9876543210,john@example.com,500,VIP customer');
+
     process.exit(1);
   }
 
@@ -40,7 +38,7 @@ async function importCustomers() {
   const header = lines[0].split(',');
   const dataLines = lines.slice(1);
 
-  console.log(`📊 Found ${dataLines.length} customers to import`);
+
 
   let success = 0;
   let failed = 0;
@@ -85,7 +83,7 @@ async function importCustomers() {
         },
       });
 
-      console.log(`✅ Created: ${customer.name} (${customer.phone})`);
+
 
       // Create credit entry if needed
       if (customerData.creditAmount && customerData.creditAmount > 0) {
@@ -112,7 +110,7 @@ async function importCustomers() {
               notes: 'Initial credit from import',
             },
           });
-          console.log(`   💳 Added credit: ₹${customerData.creditAmount}`);
+
         }
       }
 
@@ -123,13 +121,10 @@ async function importCustomers() {
     }
   }
 
-  console.log('\n📈 Import Summary:');
-  console.log(`   ✅ Success: ${success}`);
-  console.log(`   ❌ Failed: ${failed}`);
+
 
   if (errors.length > 0) {
-    console.log('\n❌ Errors:');
-    errors.forEach(err => console.log(`   - ${err}`));
+
   }
 
   await prisma.$disconnect();

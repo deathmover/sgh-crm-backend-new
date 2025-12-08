@@ -14,10 +14,10 @@ const prisma = new PrismaClient({
 
 async function enableMembership() {
   try {
-    console.log('🔧 Connecting to Render production database...\n');
+
 
     // First, check if system settings table exists and create if needed
-    console.log('1️⃣ Setting up system settings...');
+
 
     await prisma.systemSetting.upsert({
       where: { key: 'membership_enabled' },
@@ -59,14 +59,14 @@ async function enableMembership() {
       },
     });
 
-    console.log('   ✅ System settings configured');
+
 
     // Check membership plans
-    console.log('\n2️⃣ Checking membership plans...');
+
     const plansCount = await prisma.membershipPlan.count();
 
     if (plansCount === 0) {
-      console.log('   📦 Seeding membership plans...');
+
 
       await prisma.membershipPlan.createMany({
         data: [
@@ -110,13 +110,13 @@ async function enableMembership() {
         skipDuplicates: true,
       });
 
-      console.log('   ✅ Created 3 membership plans');
+
     } else {
-      console.log(`   ✅ Found ${plansCount} existing plans`);
+
     }
 
     // Verify status
-    console.log('\n3️⃣ Verifying status...');
+
     const setting = await prisma.systemSetting.findUnique({
       where: { key: 'membership_enabled' },
     });
@@ -126,14 +126,7 @@ async function enableMembership() {
       prisma.membershipPlan.count({ where: { isActive: true } }),
     ]);
 
-    console.log('\n' + '='.repeat(60));
-    console.log('✅ MEMBERSHIP SYSTEM ENABLED ON RENDER PRODUCTION!');
-    console.log('='.repeat(60));
-    console.log(`   Database: Render PostgreSQL`);
-    console.log(`   Status: ${setting?.value === 'true' ? 'ENABLED ✅' : 'DISABLED ❌'}`);
-    console.log(`   Active Plans: ${totalPlans}`);
-    console.log(`   Active Memberships: ${activeMemberships}`);
-    console.log('\n📝 Refresh your frontend to see the changes!');
+
 
   } catch (error) {
     console.error('❌ Error:', error);

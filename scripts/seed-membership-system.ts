@@ -3,10 +3,10 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function seedMembershipSystem() {
-  console.log('🌱 Seeding Membership System...\n');
+
 
   // 1. Create system settings for feature flags
-  console.log('Creating system settings (feature flags)...');
+
 
   await prisma.systemSetting.upsert({
     where: { key: 'membership_enabled' },
@@ -48,10 +48,10 @@ async function seedMembershipSystem() {
     },
   });
 
-  console.log('✓ System settings created\n');
+
 
   // 2. Create membership plans for Mid Pro PCs
-  console.log('Creating membership plans for Mid Pro PCs...');
+
 
   const plan1 = await prisma.membershipPlan.upsert({
     where: { id: 'monthly-22hrs' },
@@ -134,15 +134,9 @@ async function seedMembershipSystem() {
     },
   });
 
-  console.log('✓ Created 3 membership plans:');
-  console.log(`  - ${plan1.name}: ₹${plan1.price} (${plan1.hours} hrs, ${plan1.validityDays} days) @ ₹${plan1.pricePerHour.toFixed(2)}/hr`);
-  console.log(`  - ${plan2.name}: ₹${plan2.price} (${plan2.hours} hrs, ${plan2.validityDays} days) @ ₹${plan2.pricePerHour.toFixed(2)}/hr`);
-  console.log(`  - ${plan3.name}: ₹${plan3.price} (${plan3.hours} hrs, ${plan3.validityDays} days) @ ₹${plan3.pricePerHour.toFixed(2)}/hr`);
 
-  console.log('\n✅ Membership system seeded successfully!');
-  console.log('\n📝 Note: Membership system is DISABLED by default.');
-  console.log('   To enable: Update system_settings table, set membership_enabled = "true"');
-  console.log('   Or use the UI settings page when implemented.\n');
+
+
 
   await prisma.$disconnect();
 }

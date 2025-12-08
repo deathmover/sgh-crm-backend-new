@@ -40,11 +40,11 @@ async function importCustomers() {
     process.exit(1);
   }
 
-  console.log('📂 Reading CSV file...');
+
   const csvContent = fs.readFileSync(csvPath, 'utf-8');
   const lines = csvContent.split('\n').filter(line => line.trim());
 
-  console.log(`📊 Found ${lines.length} total lines`);
+
 
   // Skip header row and empty rows
   const dataLines = lines.slice(2); // Skip first 2 lines (header + empty)
@@ -54,7 +54,7 @@ async function importCustomers() {
   let failed = 0;
   const errors: string[] = [];
 
-  console.log('\n🔄 Starting import...\n');
+
 
   for (const line of dataLines) {
     const columns = line.split(',');
@@ -104,13 +104,13 @@ async function importCustomers() {
             where: { id: customer.id },
             data: { pendingCredit: creditAmount },
           });
-          console.log(`✅ Updated: ${customer.name} - Added credit: ₹${creditAmount}`);
+
           success++;
         } else if (creditAmount > 0 && customer.pendingCredit > 0) {
-          console.log(`⏭️  Skipped: ${name} (credit already set: ₹${customer.pendingCredit})`);
+
           skipped++;
         } else {
-          console.log(`⏭️  Skipped: ${name} (no credit to add)`);
+
           skipped++;
         }
         continue;
@@ -126,7 +126,7 @@ async function importCustomers() {
         },
       });
 
-      console.log(`✅ Created: ${customer.name}${phone ? ` (${phone})` : ''}${creditAmount > 0 ? ` - Credit: ₹${creditAmount}` : ''}${whatsapp === 'No' ? ' (No WhatsApp)' : ''}`);
+
       success++;
     } catch (error: any) {
       const errorMsg = `Failed to import ${name}: ${error.message}`;
@@ -139,19 +139,12 @@ async function importCustomers() {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 
-  console.log('\n' + '='.repeat(50));
-  console.log('📈 Import Summary:');
-  console.log('='.repeat(50));
-  console.log(`✅ Success: ${success}`);
-  console.log(`⏭️  Skipped: ${skipped}`);
-  console.log(`❌ Failed: ${failed}`);
-  console.log(`📊 Total processed: ${dataLines.length}`);
+
 
   if (errors.length > 0) {
-    console.log('\n❌ Errors:');
-    errors.slice(0, 10).forEach(err => console.log(`   - ${err}`));
+
     if (errors.length > 10) {
-      console.log(`   ... and ${errors.length - 10} more errors`);
+
     }
   }
 
@@ -162,7 +155,7 @@ async function importCustomers() {
     },
   });
 
-  console.log(`\n💰 Total pending credit in system: ₹${totalCredit._sum.pendingCredit || 0}`);
+
 
   await prisma.$disconnect();
 }

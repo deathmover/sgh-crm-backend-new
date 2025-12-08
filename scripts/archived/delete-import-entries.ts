@@ -9,7 +9,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function deleteImportEntries() {
-  console.log('🗑️  Deleting import entries...');
+
 
   const result = await prisma.entry.deleteMany({
     where: {
@@ -17,7 +17,7 @@ async function deleteImportEntries() {
     },
   });
 
-  console.log(`✅ Deleted ${result.count} import entries`);
+
 
   await prisma.$disconnect();
 }

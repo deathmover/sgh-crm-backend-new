@@ -4,7 +4,7 @@ import * as bcrypt from 'bcrypt';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Seeding database...');
+
 
   // Create Super Admin
   const hashedPassword = await bcrypt.hash(
@@ -22,7 +22,7 @@ async function main() {
     },
   });
 
-  console.log('✅ Super Admin created:', admin.username);
+
 
   // Seed Machines
   const machines = [
@@ -89,14 +89,14 @@ async function main() {
       const created = await prisma.machine.create({
         data: machine as any,
       });
-      console.log('✅ Machine created:', created.name);
+
     } else {
-      console.log('⏭️  Machine already exists:', machine.name);
+
     }
   }
 
   // Seed Membership System
-  console.log('🎟️  Seeding Membership System...');
+
 
   // 1. Create system settings for feature flags
   await prisma.systemSetting.upsert({
@@ -139,7 +139,7 @@ async function main() {
     },
   });
 
-  console.log('✅ Membership settings created');
+
 
   // 2. Create membership plans for Mid Pro PCs
   const plan1 = await prisma.membershipPlan.upsert({
@@ -223,13 +223,9 @@ async function main() {
     },
   });
 
-  console.log('✅ Created 3 membership plans:');
-  console.log(`  - ${plan1.name}: ₹${plan1.price} (${plan1.hours} hrs)`);
-  console.log(`  - ${plan2.name}: ₹${plan2.price} (${plan2.hours} hrs)`);
-  console.log(`  - ${plan3.name}: ₹${plan3.price} (${plan3.hours} hrs)`);
 
-  console.log('🎉 Seeding completed!');
-  console.log('✅ Membership system is ENABLED and ready to use!');
+
+
 }
 
 main()

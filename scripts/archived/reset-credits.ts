@@ -9,7 +9,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function resetCredits() {
-  console.log('🔄 Resetting all customer credits to 0...');
+
 
   const result = await prisma.customer.updateMany({
     data: {
@@ -17,7 +17,7 @@ async function resetCredits() {
     },
   });
 
-  console.log(`✅ Reset ${result.count} customer credits to 0`);
+
 
   await prisma.$disconnect();
 }

@@ -17,7 +17,7 @@ async function main() {
   const lines = csvContent.split('\n');
 
   // First, reset all credits to 0
-  console.log('Resetting all credits to 0...');
+
   await prisma.customer.updateMany({
     data: { pendingCredit: 0 },
   });
@@ -71,24 +71,22 @@ async function main() {
       });
 
       if (csvName.toLowerCase() !== customer.name.toLowerCase()) {
-        console.log(`⚠️  Name mismatch: CSV "${csvName}" -> DB "${customer.name}" (Phone: ${phone || 'N/A'}) = ₹${creditAmount}`);
+
       } else {
-        console.log(`✓ ${customer.name} (Phone: ${phone || 'N/A'}) = ₹${creditAmount}`);
+
       }
     } else {
       notFound.push({ csvName, phone: phone || 'N/A', credit: creditAmount });
-      console.log(`✗ NOT FOUND: "${csvName}" (Phone: ${phone || 'N/A'}) = ₹${creditAmount}`);
+
     }
   }
 
-  console.log('\n=== SUMMARY ===');
-  console.log(`Total credits updated: ${updates.length}`);
-  console.log(`Not found in database: ${notFound.length}`);
+
 
   if (notFound.length > 0) {
-    console.log('\n=== CUSTOMERS NOT FOUND ===');
+
     notFound.forEach(item => {
-      console.log(`- ${item.csvName} (Phone: ${item.phone}) = ₹${item.credit}`);
+
     });
   }
 
