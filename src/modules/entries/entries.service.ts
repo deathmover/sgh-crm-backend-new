@@ -543,8 +543,20 @@ export class EntriesService {
     const creditRevenue = creditData._sum.creditAmount || 0;
     const totalRevenue = cashRevenue + onlineRevenue;
 
+    // Fix: Fill in missing duration if start and end times exist
+    const processedEntries = entries.map((entry) => {
+      if ((!entry.duration || entry.duration === 0) && entry.startTime && entry.endTime) {
+        const start = new Date(entry.startTime);
+        const end = new Date(entry.endTime);
+        const diffMs = end.getTime() - start.getTime();
+        const diffMins = Math.ceil(diffMs / 60000);
+        return { ...entry, duration: diffMins > 0 ? diffMins : 0 };
+      }
+      return entry;
+    });
+
     return {
-      entries,
+      entries: processedEntries,
       summary: {
         totalRevenue,
         cashRevenue,
