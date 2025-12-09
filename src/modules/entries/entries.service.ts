@@ -165,6 +165,7 @@ export class EntriesService {
         machineId,
         startTime: new Date(startTime),
         predefinedDuration,
+        duration: roundedDuration, // Set duration immediately for display in daily sheet
         roundedDuration,
         cost: estimatedCost || undefined,
         finalAmount: membershipId ? 0 : estimatedFinalAmount, // ₹0 if using membership
