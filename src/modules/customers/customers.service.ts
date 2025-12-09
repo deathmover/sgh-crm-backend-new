@@ -17,7 +17,20 @@ export class CustomersService {
   constructor(private prisma: PrismaService) {}
 
   async create(createCustomerDto: CreateCustomerDto) {
-    const { phone } = createCustomerDto;
+    const { name, phone } = createCustomerDto;
+
+    // Check for duplicate name (case-insensitive)
+    const existingByName = await this.prisma.customer.findFirst({
+      where: {
+        name: {
+          equals: name.trim(),
+          mode: 'insensitive'
+        }
+      },
+    });
+    if (existingByName) {
+      throw new ConflictException('Customer with this name already exists');
+    }
 
     // Check for duplicate phone
     if (phone) {
@@ -29,9 +42,17 @@ export class CustomersService {
       }
     }
 
-    return this.prisma.customer.create({
-      data: createCustomerDto,
-    });
+    try {
+      return await this.prisma.customer.create({
+        data: createCustomerDto,
+      });
+    } catch (error) {
+      // Handle Prisma unique constraint violation (P2002)
+      if (error.code === 'P2002') {
+        throw new ConflictException('Customer with this phone already exists');
+      }
+      throw error;
+    }
   }
 
   async findAll(query: CustomerQueryDto) {
@@ -142,7 +163,22 @@ export class CustomersService {
   async update(id: string, updateCustomerDto: UpdateCustomerDto) {
     await this.findOne(id);
 
-    const { phone } = updateCustomerDto;
+    const { name, phone } = updateCustomerDto;
+
+    // Check for duplicate name if updating name (case-insensitive)
+    if (name) {
+      const existingByName = await this.prisma.customer.findFirst({
+        where: {
+          name: {
+            equals: name.trim(),
+            mode: 'insensitive'
+          }
+        },
+      });
+      if (existingByName && existingByName.id !== id) {
+        throw new ConflictException('Customer with this name already exists');
+      }
+    }
 
     // Check for duplicate phone if updating phone
     if (phone) {
@@ -154,10 +190,18 @@ export class CustomersService {
       }
     }
 
-    return this.prisma.customer.update({
-      where: { id },
-      data: updateCustomerDto,
-    });
+    try {
+      return await this.prisma.customer.update({
+        where: { id },
+        data: updateCustomerDto,
+      });
+    } catch (error) {
+      // Handle Prisma unique constraint violation (P2002)
+      if (error.code === 'P2002') {
+        throw new ConflictException('Customer with this phone already exists');
+      }
+      throw error;
+    }
   }
 
   async remove(id: string) {
