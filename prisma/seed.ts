@@ -29,7 +29,7 @@ async function main() {
     {
       name: 'Mid Pro PC',
       type: 'mid_pro',
-      units: 11,
+      units: 15,
       hourlyRate: 50,
       halfHourlyRate: 30,
       packageRates: {

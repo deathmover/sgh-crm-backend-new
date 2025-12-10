@@ -116,7 +116,7 @@ export class MachinesService {
     const machine = await this.findOne(machineId);
     const durationHours = durationMinutes / 60;
 
-    // Check for package rates first
+    // Check for package rates first - use only ONE package, then calculate rest at hourly rates
     if (machine.packageRates) {
       const packageRates = machine.packageRates as Record<string, number>;
       const packageHours = Object.keys(packageRates)
@@ -125,7 +125,41 @@ export class MachinesService {
 
       for (const hours of packageHours) {
         if (durationHours >= hours) {
-          return packageRates[hours.toString()];
+          // Use only ONE package (not multiple)
+          const packageCost = packageRates[hours.toString()];
+          const remainingHours = durationHours - hours;
+
+          // Calculate remaining time cost using the same logic as the regular calculation
+          const remainingMinutes = remainingHours * 60;
+          let remainingCost = 0;
+
+          if (remainingMinutes > 0) {
+            // If ≤ 30 minutes and half-hourly rate exists, use it
+            if (remainingMinutes <= 30 && machine.halfHourlyRate) {
+              remainingCost = machine.halfHourlyRate;
+            }
+            // For time > 30 minutes with half-hourly rate, calculate in blocks
+            else if (remainingMinutes > 30 && machine.halfHourlyRate) {
+              const fullHours = Math.floor(remainingMinutes / 60);
+              const remainingMins = remainingMinutes % 60;
+
+              remainingCost = fullHours * machine.hourlyRate;
+
+              if (remainingMins === 30) {
+                // Exactly 30 minutes remaining, use half-hourly rate
+                remainingCost += machine.halfHourlyRate;
+              } else if (remainingMins > 0) {
+                // Less than 30 minutes remaining, charge full hour
+                remainingCost += machine.hourlyRate;
+              }
+            }
+            // Default to hourly rate (for machines without half-hourly rate)
+            else {
+              remainingCost = Math.ceil(remainingHours) * machine.hourlyRate;
+            }
+          }
+
+          return packageCost + remainingCost;
         }
       }
     }

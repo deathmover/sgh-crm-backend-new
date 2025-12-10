@@ -70,7 +70,8 @@ model Entry {
   duration           Int?                // Actual duration in minutes
   roundedDuration    Int?                // For cost calculation
   cost               Int?                // Auto-calculated
-  finalAmount        Int                 // Admin-adjusted
+  discount           Int                 @default(0) // Discount applied
+  finalAmount        Int                 // Admin-adjusted (includes discount)
   paymentType        String              @default("cash") // Deprecated - kept for backward compatibility
   paymentStatus      String?             // null | not_paid | partial | paid - null means no payment recorded yet
   cashAmount         Int                 @default(0) // Amount paid in cash

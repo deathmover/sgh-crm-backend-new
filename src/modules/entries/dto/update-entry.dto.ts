@@ -62,6 +62,13 @@ export class UpdateEntryDto {
   @Type(() => Number)
   beveragesAmount?: number;
 
+  @ApiPropertyOptional({ example: 20, description: 'Discount applied' })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  discount?: number;
+
   @ApiPropertyOptional({ example: 150, description: 'Final amount (for ended sessions)' })
   @IsNumber()
   @Min(0)

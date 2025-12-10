@@ -25,7 +25,7 @@ export class EntriesService {
   ) {}
 
   async create(createEntryDto: CreateEntryDto) {
-    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, notes, useMembershipId } =
+    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, notes, useMembershipId } =
       createEntryDto;
 
     // Verify customer exists
@@ -150,6 +150,12 @@ export class EntriesService {
 
       estimatedFinalAmount = estimatedCost;
 
+      // Apply discount if provided
+      const discountAmount = discount || 0;
+      if (discountAmount > 0) {
+        estimatedFinalAmount = Math.max(0, estimatedFinalAmount - discountAmount);
+      }
+
       // If using membership, deduct EXACT hours (not rounded)
       if (membershipId && membership) {
         const hoursToDeduct = predefinedDuration / 60; // Use exact minutes, not rounded
@@ -168,6 +174,7 @@ export class EntriesService {
         ...(roundedDuration && { duration: roundedDuration }), // Set duration immediately for display in daily sheet
         roundedDuration,
         cost: estimatedCost || undefined,
+        discount: discount || 0,
         finalAmount: membershipId ? 0 : estimatedFinalAmount, // ₹0 if using membership
         paymentType: 'cash', // Default, will be updated on end
         cashAmount: cash,
@@ -244,21 +251,22 @@ export class EntriesService {
     }
 
     // Determine final amount:
-    // 1. If user explicitly provides finalAmount in endEntryDto, use it AS-IS (already includes beverages if any)
-    // 2. Else if entry already has finalAmount from creation (predefined duration), use it and add beverages
-    // 3. Else calculate based on actual duration and add beverages
+    // 1. If user explicitly provides finalAmount in endEntryDto, use it AS-IS (already includes beverages and discount)
+    // 2. Else if entry already has finalAmount from creation (predefined duration), use it as-is (already includes discount and beverages)
+    // 3. Else calculate based on actual duration: (cost - discount) + beverages
     const beveragesAmount = entry.beveragesAmount || 0;
+    const discount = entry.discount || 0;
     let finalAmount: number;
 
     if (endEntryDto.finalAmount && endEntryDto.finalAmount > 0) {
-      // User explicitly provided amount - treat as complete total (already includes beverages)
+      // User explicitly provided amount - treat as complete total (already includes beverages and discount)
       finalAmount = endEntryDto.finalAmount;
     } else if (entry.finalAmount > 0) {
-      // Entry was created with predefined duration, keep original amount and add beverages
-      finalAmount = entry.finalAmount + beveragesAmount;
+      // Entry was created with predefined duration, finalAmount already includes discount and beverages
+      finalAmount = entry.finalAmount;
     } else {
-      // Calculate based on actual duration and add beverages
-      finalAmount = calculatedCost + beveragesAmount;
+      // Calculate based on actual duration: (cost - discount) + beverages
+      finalAmount = Math.max(0, calculatedCost - discount) + beveragesAmount;
     }
 
     // Handle split payments - add to existing advance payments
@@ -609,14 +617,17 @@ export class EntriesService {
         }
 
         // Only recalculate finalAmount if not explicitly provided by client
-        // When client provides finalAmount, it already includes beverages
+        // When client provides finalAmount, it already includes beverages and discount
         if (updateData.finalAmount === undefined) {
           const beveragesAmount = updateData.beveragesAmount !== undefined
             ? updateData.beveragesAmount
             : entry.beveragesAmount || 0;
-          dataToUpdate.finalAmount = calculatedCost + beveragesAmount;
+          const discountAmount = updateData.discount !== undefined
+            ? updateData.discount
+            : entry.discount || 0;
+          dataToUpdate.finalAmount = Math.max(0, calculatedCost - discountAmount) + beveragesAmount;
         }
-        // If finalAmount IS provided, use it as-is (already includes beverages)
+        // If finalAmount IS provided, use it as-is (already includes beverages and discount)
       }
     }
 

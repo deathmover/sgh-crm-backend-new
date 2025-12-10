@@ -59,6 +59,13 @@ export class CreateEntryDto {
   @IsOptional()
   pcNumber?: string;
 
+  @ApiPropertyOptional({ example: 20, description: 'Discount applied' })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  discount?: number;
+
   @ApiPropertyOptional({ example: 'Customer requested mid-end PC' })
   @IsString()
   @IsOptional()
