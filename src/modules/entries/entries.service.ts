@@ -243,24 +243,23 @@ export class EntriesService {
       calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
     }
 
-    // Determine play amount:
-    // 1. If user explicitly provides finalAmount in endEntryDto, use it
-    // 2. Else if entry already has finalAmount from creation (predefined duration), keep it
-    // 3. Else calculate based on actual duration
-    let playAmount: number;
-    if (endEntryDto.finalAmount && endEntryDto.finalAmount > 0) {
-      // User explicitly provided amount
-      playAmount = endEntryDto.finalAmount;
-    } else if (entry.finalAmount > 0) {
-      // Entry was created with predefined duration, keep original amount
-      playAmount = entry.finalAmount;
-    } else {
-      // Calculate based on actual duration
-      playAmount = calculatedCost;
-    }
-
+    // Determine final amount:
+    // 1. If user explicitly provides finalAmount in endEntryDto, use it AS-IS (already includes beverages if any)
+    // 2. Else if entry already has finalAmount from creation (predefined duration), use it and add beverages
+    // 3. Else calculate based on actual duration and add beverages
     const beveragesAmount = entry.beveragesAmount || 0;
-    const finalAmount = playAmount + beveragesAmount;
+    let finalAmount: number;
+
+    if (endEntryDto.finalAmount && endEntryDto.finalAmount > 0) {
+      // User explicitly provided amount - treat as complete total (already includes beverages)
+      finalAmount = endEntryDto.finalAmount;
+    } else if (entry.finalAmount > 0) {
+      // Entry was created with predefined duration, keep original amount and add beverages
+      finalAmount = entry.finalAmount + beveragesAmount;
+    } else {
+      // Calculate based on actual duration and add beverages
+      finalAmount = calculatedCost + beveragesAmount;
+    }
 
     // Handle split payments - add to existing advance payments
     let cashAmount = entry.cashAmount || 0;
@@ -609,13 +608,15 @@ export class EntriesService {
           dataToUpdate.endTime = newEndTime;
         }
 
-        // If finalAmount is not explicitly provided, calculate it
+        // Only recalculate finalAmount if not explicitly provided by client
+        // When client provides finalAmount, it already includes beverages
         if (updateData.finalAmount === undefined) {
           const beveragesAmount = updateData.beveragesAmount !== undefined
             ? updateData.beveragesAmount
             : entry.beveragesAmount || 0;
           dataToUpdate.finalAmount = calculatedCost + beveragesAmount;
         }
+        // If finalAmount IS provided, use it as-is (already includes beverages)
       }
     }
 
