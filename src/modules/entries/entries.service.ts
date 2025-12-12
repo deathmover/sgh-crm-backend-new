@@ -25,7 +25,7 @@ export class EntriesService {
   ) {}
 
   async create(createEntryDto: CreateEntryDto) {
-    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, notes, useMembershipId } =
+    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, beveragesAmount, notes, useMembershipId } =
       createEntryDto;
 
     // Verify customer exists
@@ -156,6 +156,12 @@ export class EntriesService {
         estimatedFinalAmount = Math.max(0, estimatedFinalAmount - discountAmount);
       }
 
+      // Add beverages amount if provided
+      const beverages = beveragesAmount || 0;
+      if (beverages > 0) {
+        estimatedFinalAmount = estimatedFinalAmount + beverages;
+      }
+
       // If using membership, deduct EXACT hours (not rounded)
       if (membershipId && membership) {
         const hoursToDeduct = predefinedDuration / 60; // Use exact minutes, not rounded
@@ -175,6 +181,7 @@ export class EntriesService {
         roundedDuration,
         cost: estimatedCost || undefined,
         discount: discount || 0,
+        beveragesAmount: beveragesAmount || 0,
         finalAmount: membershipId ? 0 : estimatedFinalAmount, // ₹0 if using membership
         paymentType: 'cash', // Default, will be updated on end
         cashAmount: cash,
@@ -993,14 +1000,18 @@ export class EntriesService {
           calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
         }
 
-        // Pass only the play amount (calculatedCost)
-        // endEntry will add beverages automatically from entry.beveragesAmount
+        // Calculate final amount including discount and beverages
+        const discount = entry.discount || 0;
+        const beveragesAmount = entry.beveragesAmount || 0;
+        const finalAmountWithAdjustments = Math.max(0, calculatedCost - discount) + beveragesAmount;
+
+        // Pass the complete final amount (play cost - discount + beverages)
         const ended = await this.endEntry(
           entry.id,
           {
             endTime: expectedEnd.toISOString(),
             paymentType: 'credit', // Legacy field
-            finalAmount: calculatedCost, // Only pass play amount, not including beverages
+            finalAmount: finalAmountWithAdjustments,
             cashAmount: 0,
             onlineAmount: 0,
             creditAmount: 0, // Don't pass creditAmount, let endEntry calculate it

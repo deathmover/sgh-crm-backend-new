@@ -66,6 +66,13 @@ export class CreateEntryDto {
   @Type(() => Number)
   discount?: number;
 
+  @ApiPropertyOptional({ example: 50, description: 'Total beverages cost' })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  beveragesAmount?: number;
+
   @ApiPropertyOptional({ example: 'Customer requested mid-end PC' })
   @IsString()
   @IsOptional()
