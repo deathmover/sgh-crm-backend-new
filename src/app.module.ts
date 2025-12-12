@@ -12,6 +12,7 @@ import { EntriesModule } from './modules/entries/entries.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { MembershipsModule } from './modules/memberships/memberships.module';
+import { BookingsModule } from './modules/bookings/bookings.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -30,6 +31,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     AnalyticsModule,
     ExpensesModule,
     MembershipsModule,
+    BookingsModule,
   ],
   controllers: [AppController],
   providers: [

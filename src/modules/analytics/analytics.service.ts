@@ -570,6 +570,134 @@ export class AnalyticsService {
     return utilizationData.sort((a, b) => b.utilizationRate - a.utilizationRate);
   }
 
+  async getPcUtilization(date?: string, startDate?: string, endDate?: string) {
+    let dateFilter: any;
+
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
+      dateFilter = {
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      };
+    } else {
+      const targetDate = date ? new Date(date) : new Date();
+      const startOfDay = new Date(targetDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(targetDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      dateFilter = {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      };
+    }
+
+    // Get all entries with and without PC numbers
+    const totalEntries = await this.prisma.entry.count({
+      where: {
+        ...dateFilter,
+        isDeleted: false,
+      },
+    });
+
+    const entriesWithPcNumber = await this.prisma.entry.count({
+      where: {
+        ...dateFilter,
+        isDeleted: false,
+        pcNumber: {
+          not: null,
+        },
+      },
+    });
+
+    // Get all entries with PC numbers and their durations
+    const entriesWithPc = await this.prisma.entry.findMany({
+      where: {
+        ...dateFilter,
+        isDeleted: false,
+        pcNumber: {
+          not: null,
+        },
+      },
+      select: {
+        pcNumber: true,
+        machineId: true,
+        duration: true,
+      },
+    });
+
+    // Calculate total hours for entries with PC numbers
+    const totalMinutesWithPc = entriesWithPc.reduce(
+      (sum, entry) => sum + (entry.duration || 0),
+      0,
+    );
+    const totalHoursWithPc = totalMinutesWithPc / 60;
+
+    // Group by PC number and calculate hours for each
+    const pcUsageMap = new Map<string, {
+      machineId: string;
+      minutes: number;
+      count: number;
+    }>();
+
+    entriesWithPc.forEach((entry) => {
+      const key = `${entry.machineId}-${entry.pcNumber}`;
+      const existing = pcUsageMap.get(key) || {
+        machineId: entry.machineId,
+        minutes: 0,
+        count: 0
+      };
+      existing.minutes += entry.duration || 0;
+      existing.count += 1;
+      pcUsageMap.set(key, existing);
+    });
+
+    // Convert to array and add machine details
+    const pcUtilizationWithMachines = await Promise.all(
+      Array.from(pcUsageMap.entries()).map(async ([key, data]) => {
+        const pcNumber = key.split('-')[1];
+        const machine = await this.prisma.machine.findUnique({
+          where: { id: data.machineId },
+          select: { name: true, type: true },
+        });
+
+        return {
+          pcNumber,
+          machineId: data.machineId,
+          machineName: machine?.name || 'Unknown',
+          machineType: machine?.type || 'Unknown',
+          usageCount: data.count,
+          totalMinutes: data.minutes,
+          totalHours: parseFloat((data.minutes / 60).toFixed(2)),
+        };
+      }),
+    );
+
+    // Sort by total hours (descending)
+    pcUtilizationWithMachines.sort((a, b) => b.totalHours - a.totalHours);
+
+    const utilizationRate = totalEntries > 0
+      ? parseFloat(((entriesWithPcNumber / totalEntries) * 100).toFixed(2))
+      : 0;
+
+    return {
+      totalEntries,
+      entriesWithPcNumber,
+      entriesWithoutPcNumber: totalEntries - entriesWithPcNumber,
+      utilizationRate,
+      totalHoursWithPc: parseFloat(totalHoursWithPc.toFixed(2)),
+      pcNumberBreakdown: pcUtilizationWithMachines,
+    };
+  }
+
   async getFinancialAnalysis(startDate?: string, endDate?: string) {
     // Default to current month if no dates provided
     const now = new Date();

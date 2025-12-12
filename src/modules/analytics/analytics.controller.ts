@@ -112,6 +112,19 @@ export class AnalyticsController {
     return this.analyticsService.getMachineUtilization(date, startDate, endDate);
   }
 
+  @Get('pc-utilization')
+  @ApiOperation({ summary: 'Get PC number utilization (how often PC numbers are filled in entries)' })
+  @ApiQuery({ name: 'date', required: false, example: '2025-09-30' })
+  @ApiQuery({ name: 'startDate', required: false, example: '2025-09-01' })
+  @ApiQuery({ name: 'endDate', required: false, example: '2025-09-30' })
+  getPcUtilization(
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.analyticsService.getPcUtilization(date, startDate, endDate);
+  }
+
   @Get('financial-analysis')
   @ApiOperation({ summary: 'Get comprehensive financial analysis (cash flow, profit/loss)' })
   @ApiQuery({ name: 'startDate', required: false, example: '2025-01-01' })

@@ -35,6 +35,7 @@ model Customer {
   updatedAt     DateTime             @updatedAt
   entries       Entry[]
   memberships   CustomerMembership[]
+  bookings      Booking[]
 
   @@index([phone])
   @@index([name])
@@ -42,17 +43,18 @@ model Customer {
 }
 
 model Machine {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
-  type           String   // mid_pro | high_end | ultra | ps5 | simulator
-  units          Int      @default(1)
+  type           String    // mid_pro | high_end | ultra | ps5 | simulator
+  units          Int       @default(1)
   hourlyRate     Int
   halfHourlyRate Int?
-  packageRates   Json?    // { "3": 130, "5": 200, "12": 500 } hours as keys
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  packageRates   Json?     // { "3": 130, "5": 200, "12": 500 } hours as keys
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
   entries        Entry[]
+  bookings       Booking[]
 
   @@index([type])
   @@map("machines")
@@ -87,6 +89,7 @@ model Entry {
   membershipId       String?             // Reference to membership used (if any)
   membership         CustomerMembership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
   membershipHours    Float?              // Hours deducted from membership (if used)
+  booking            Booking?            // Booking that created this entry (if any)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -235,4 +238,56 @@ model SystemSetting {
 
   @@index([category])
   @@map("system_settings")
+}
+
+// Booking System
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+}
+
+model Booking {
+  id             String        @id @default(cuid())
+  customer       Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId     String
+  machine        Machine       @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  machineId      String
+  pcNumber       String?       // PC/Machine unit number
+
+  // Timing
+  bookingDate    DateTime      // Date of the booking
+  startTime      DateTime      // When session should start
+  endTime        DateTime      // Expected end time
+  duration       Int           // Duration in minutes
+
+  // Status
+  status         BookingStatus @default(CONFIRMED)
+
+  // Optional advance payment
+  advancePayment Boolean       @default(false)
+  cashAmount     Int           @default(0)
+  onlineAmount   Int           @default(0)
+  creditAmount   Int           @default(0)
+  discount       Int           @default(0)
+
+  // Entry created on check-in
+  entryId        String?       @unique
+  entry          Entry?        @relation(fields: [entryId], references: [id], onDelete: SetNull)
+
+  // Metadata
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  cancelledAt    DateTime?
+  checkedInAt    DateTime?
+
+  @@index([customerId])
+  @@index([machineId])
+  @@index([bookingDate])
+  @@index([status])
+  @@index([startTime])
+  @@map("bookings")
 }
