@@ -50,11 +50,12 @@ export class EntriesService {
       throw new NotFoundException('Machine not found');
     }
 
-    if (machine.entries.length >= machine.units) {
-      throw new BadRequestException(
-        `Machine ${machine.name} is fully occupied`,
-      );
-    }
+    // Occupation check disabled - allow entries even if machine is at capacity
+    // if (machine.entries.length >= machine.units) {
+    //   throw new BadRequestException(
+    //     `Machine ${machine.name} is fully occupied`,
+    //   );
+    // }
 
     // Check if membership should be used
     let membershipId: string | undefined = undefined;
