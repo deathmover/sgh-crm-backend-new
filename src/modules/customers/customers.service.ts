@@ -89,6 +89,8 @@ export class CustomersService {
     ]);
 
     // Calculate total pending credit (Manual + Entry-based)
+    // pendingCredit field = manual credit balance set by admin
+    // entry credits = unpaid amounts from gaming sessions
     const customersWithCredit = await Promise.all(
       customers.map(async (customer) => {
         const entryStats = await this.prisma.entry.aggregate({
@@ -101,11 +103,14 @@ export class CustomersService {
         });
 
         const entryCredit = entryStats._sum.creditAmount || 0;
-        const totalCredit = (customer.pendingCredit || 0) + entryCredit;
+        const manualCredit = customer.pendingCredit || 0;
+        const totalCredit = manualCredit + entryCredit;
 
         return {
           ...customer,
           pendingCredit: totalCredit,
+          manualCredit: manualCredit,
+          entryCredit: entryCredit,
         };
       }),
     );
@@ -239,12 +244,17 @@ export class CustomersService {
       select: { createdAt: true },
     });
 
-    const totalCredit = (customer.pendingCredit || 0) + (stats._sum.creditAmount || 0);
+    // Calculate total pending credit (manual + entry-based)
+    const manualCredit = customer.pendingCredit || 0;
+    const entryCredit = stats._sum.creditAmount || 0;
+    const totalCredit = manualCredit + entryCredit;
 
     return {
       totalVisits: stats._count,
       totalSpent: stats._sum.finalAmount || 0,
       pendingCredit: totalCredit,
+      manualCredit: manualCredit,
+      entryCredit: entryCredit,
       lastVisit: lastEntry?.createdAt?.toISOString(),
     };
   }
@@ -270,15 +280,14 @@ export class CustomersService {
       throw new ConflictException('Payment amount must be greater than 0');
     }
 
-    // Get all unpaid/partial entries for this customer
+    // Get all unpaid/partial entries for this customer (both active and ended)
     const unpaidEntries = await this.prisma.entry.findMany({
       where: {
         customerId,
-        endTime: { not: null },
         creditAmount: { gt: 0 },
         isDeleted: false,
       },
-      orderBy: { endTime: 'asc' }, // Pay off oldest debts first
+      orderBy: { createdAt: 'asc' }, // Pay off oldest debts first
     });
 
     // Check if customer has any pending credit (either from entries or customer balance)

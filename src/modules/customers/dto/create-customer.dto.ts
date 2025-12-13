@@ -8,6 +8,7 @@ import {
   IsNumber,
   Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateCustomerDto {
   @ApiProperty({ example: 'John Doe' })
@@ -29,6 +30,7 @@ export class CreateCustomerDto {
   email?: string;
 
   @ApiPropertyOptional({ example: 0, description: 'Initial credit balance for the customer' })
+  @Type(() => Number)
   @IsNumber()
   @IsOptional()
   @Min(0, { message: 'Pending credit must be a positive number' })
