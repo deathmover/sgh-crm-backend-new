@@ -590,6 +590,12 @@ export class EntriesService {
     // Prepare the data to update
     const dataToUpdate = { ...updateData };
 
+    // Check if any amount-related fields are being updated
+    const needsRecalculation =
+      updateData.predefinedDuration !== undefined ||
+      updateData.beveragesAmount !== undefined ||
+      updateData.discount !== undefined;
+
     // If predefinedDuration is being updated, recalculate cost
     if (updateData.predefinedDuration !== undefined) {
       const machineId = updateData.machineId || entry.machineId;
@@ -623,21 +629,24 @@ export class EntriesService {
           newEndTime.setMinutes(newEndTime.getMinutes() + predefinedDuration);
           dataToUpdate.endTime = newEndTime;
         }
-
-        // Only recalculate finalAmount if not explicitly provided by client
-        // When client provides finalAmount, it already includes beverages and discount
-        if (updateData.finalAmount === undefined) {
-          const beveragesAmount = updateData.beveragesAmount !== undefined
-            ? updateData.beveragesAmount
-            : entry.beveragesAmount || 0;
-          const discountAmount = updateData.discount !== undefined
-            ? updateData.discount
-            : entry.discount || 0;
-          dataToUpdate.finalAmount = Math.max(0, calculatedCost - discountAmount) + beveragesAmount;
-        }
-        // If finalAmount IS provided, use it as-is (already includes beverages and discount)
       }
     }
+
+    // Recalculate finalAmount if beverages, discount, or duration changed
+    // But only if client didn't explicitly provide finalAmount
+    if (needsRecalculation && updateData.finalAmount === undefined) {
+      const effectiveCost = dataToUpdate.cost !== undefined
+        ? dataToUpdate.cost
+        : entry.cost || 0;
+      const beveragesAmount = updateData.beveragesAmount !== undefined
+        ? updateData.beveragesAmount
+        : entry.beveragesAmount || 0;
+      const discountAmount = updateData.discount !== undefined
+        ? updateData.discount
+        : entry.discount || 0;
+      dataToUpdate.finalAmount = Math.max(0, effectiveCost - discountAmount) + beveragesAmount;
+    }
+    // If finalAmount IS provided by client, use it as-is (already includes beverages and discount)
 
     // Auto-calculate payment status if amounts are changed
     const effectiveFinalAmount =
