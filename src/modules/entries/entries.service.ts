@@ -523,11 +523,40 @@ export class EntriesService {
       },
     });
 
+    // Calculate total pending credit for each customer (manual + entry-based)
+    const enrichedEntries = await Promise.all(
+      entries.map(async (entry) => {
+        if (!entry.customer) return entry;
+
+        // Get entry-based credit for this customer
+        const entryStats = await this.prisma.entry.aggregate({
+          where: {
+            customerId: entry.customer.id,
+            creditAmount: { gt: 0 },
+            isDeleted: false,
+          },
+          _sum: { creditAmount: true },
+        });
+
+        const entryCredit = entryStats._sum.creditAmount || 0;
+        const manualCredit = entry.customer.pendingCredit || 0;
+        const totalCredit = manualCredit + entryCredit;
+
+        return {
+          ...entry,
+          customer: {
+            ...entry.customer,
+            pendingCredit: totalCredit,
+          },
+        };
+      }),
+    );
+
     // Get all entries (including active)
-    const totalEntries = entries.length;
+    const totalEntries = enrichedEntries.length;
 
     // Get active entries count
-    const activeEntries = entries.filter((entry) => !entry.endTime).length;
+    const activeEntries = enrichedEntries.filter((entry) => !entry.endTime).length;
 
     // Get payment breakdown - using split payment fields
     const [cashData, onlineData, creditData] = await Promise.all([
@@ -560,7 +589,7 @@ export class EntriesService {
     const totalRevenue = cashRevenue + onlineRevenue;
 
     // Fix: Fill in missing duration if start and end times exist
-    const processedEntries = entries.map((entry) => {
+    const processedEntries = enrichedEntries.map((entry) => {
       if ((!entry.duration || entry.duration === 0) && entry.startTime && entry.endTime) {
         const start = new Date(entry.startTime);
         const end = new Date(entry.endTime);
