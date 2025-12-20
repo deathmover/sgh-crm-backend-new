@@ -523,34 +523,45 @@ export class EntriesService {
       },
     });
 
-    // Calculate total pending credit for each customer (manual + entry-based)
-    const enrichedEntries = await Promise.all(
-      entries.map(async (entry) => {
-        if (!entry.customer) return entry;
+    // Get unique customer IDs from entries
+    const customerIds = [...new Set(entries.map(e => e.customerId).filter(Boolean))];
 
-        // Get entry-based credit for this customer
-        const entryStats = await this.prisma.entry.aggregate({
-          where: {
-            customerId: entry.customer.id,
-            creditAmount: { gt: 0 },
-            isDeleted: false,
-          },
-          _sum: { creditAmount: true },
-        });
+    // Calculate entry-based credit for all customers in a single query
+    const customerCreditMap = new Map<string, number>();
+    if (customerIds.length > 0) {
+      const creditStats = await this.prisma.entry.groupBy({
+        by: ['customerId'],
+        where: {
+          customerId: { in: customerIds },
+          creditAmount: { gt: 0 },
+          isDeleted: false,
+        },
+        _sum: { creditAmount: true },
+      });
 
-        const entryCredit = entryStats._sum.creditAmount || 0;
-        const manualCredit = entry.customer.pendingCredit || 0;
-        const totalCredit = manualCredit + entryCredit;
+      creditStats.forEach((stat) => {
+        if (stat.customerId) {
+          customerCreditMap.set(stat.customerId, stat._sum.creditAmount || 0);
+        }
+      });
+    }
 
-        return {
-          ...entry,
-          customer: {
-            ...entry.customer,
-            pendingCredit: totalCredit,
-          },
-        };
-      }),
-    );
+    // Enrich entries with calculated total credit
+    const enrichedEntries = entries.map((entry) => {
+      if (!entry.customer) return entry;
+
+      const entryCredit = customerCreditMap.get(entry.customer.id) || 0;
+      const manualCredit = entry.customer.pendingCredit || 0;
+      const totalCredit = manualCredit + entryCredit;
+
+      return {
+        ...entry,
+        customer: {
+          ...entry.customer,
+          pendingCredit: totalCredit,
+        },
+      };
+    });
 
     // Get all entries (including active)
     const totalEntries = enrichedEntries.length;
