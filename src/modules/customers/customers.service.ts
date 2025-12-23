@@ -91,29 +91,42 @@ export class CustomersService {
     // Calculate total pending credit (Manual + Entry-based)
     // pendingCredit field = manual credit balance set by admin
     // entry credits = unpaid amounts from gaming sessions
-    const customersWithCredit = await Promise.all(
-      customers.map(async (customer) => {
-        const entryStats = await this.prisma.entry.aggregate({
-          where: {
-            customerId: customer.id,
-            creditAmount: { gt: 0 },
-            isDeleted: false,
-          },
-          _sum: { creditAmount: true },
-        });
 
-        const entryCredit = entryStats._sum.creditAmount || 0;
-        const manualCredit = customer.pendingCredit || 0;
-        const totalCredit = manualCredit + entryCredit;
+    // OPTIMIZATION: Use a single aggregation query instead of N queries
+    const customerIds = customers.map(c => c.id);
+    const customerCreditMap = new Map<string, number>();
 
-        return {
-          ...customer,
-          pendingCredit: totalCredit,
-          manualCredit: manualCredit,
-          entryCredit: entryCredit,
-        };
-      }),
-    );
+    if (customerIds.length > 0) {
+      const creditStats = await this.prisma.entry.groupBy({
+        by: ['customerId'],
+        where: {
+          customerId: { in: customerIds },
+          creditAmount: { gt: 0 },
+          isDeleted: false,
+        },
+        _sum: { creditAmount: true },
+      });
+
+      creditStats.forEach((stat) => {
+        if (stat.customerId) {
+          customerCreditMap.set(stat.customerId, stat._sum.creditAmount || 0);
+        }
+      });
+    }
+
+    // Map credits to customers
+    const customersWithCredit = customers.map((customer) => {
+      const entryCredit = customerCreditMap.get(customer.id) || 0;
+      const manualCredit = customer.pendingCredit || 0;
+      const totalCredit = manualCredit + entryCredit;
+
+      return {
+        ...customer,
+        pendingCredit: totalCredit,
+        manualCredit: manualCredit,
+        entryCredit: entryCredit,
+      };
+    });
 
     return {
       data: customersWithCredit,
