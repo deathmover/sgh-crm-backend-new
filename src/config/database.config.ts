@@ -12,6 +12,12 @@ export class PrismaService
         process.env.NODE_ENV === 'development'
           ? ['query', 'error', 'warn']
           : ['error'],
+      // Connection pool configuration to prevent "too many clients" errors
+      datasources: {
+        db: {
+          url: process.env.DATABASE_URL,
+        },
+      },
     });
   }
 
