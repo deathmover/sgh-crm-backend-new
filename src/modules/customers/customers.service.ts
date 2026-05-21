@@ -24,7 +24,7 @@ export class CustomersService {
       where: {
         name: {
           equals: name.trim(),
-          mode: 'insensitive'
+          // SQLite comparisons are case-insensitive by default; mode not needed
         }
       },
     });
@@ -189,7 +189,6 @@ export class CustomersService {
         where: {
           name: {
             equals: name.trim(),
-            mode: 'insensitive'
           }
         },
       });
