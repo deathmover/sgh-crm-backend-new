@@ -62,9 +62,9 @@ export class CustomersService {
     const where = search
       ? {
           OR: [
-            { name: { contains: search, mode: 'insensitive' as const } },
-            { phone: { contains: search, mode: 'insensitive' as const } },
-            { email: { contains: search, mode: 'insensitive' as const } },
+            { name: { contains: search } },
+            { phone: { contains: search } },
+            { email: { contains: search } },
           ],
         }
       : {};
@@ -380,9 +380,9 @@ export class CustomersService {
     const where = search
       ? {
           OR: [
-            { name: { contains: search, mode: 'insensitive' as const } },
-            { phone: { contains: search, mode: 'insensitive' as const } },
-            { email: { contains: search, mode: 'insensitive' as const } },
+            { name: { contains: search } },
+            { phone: { contains: search } },
+            { email: { contains: search } },
           ],
         }
       : {};
