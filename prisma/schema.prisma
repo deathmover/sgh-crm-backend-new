@@ -5,11 +5,13 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native = dev machine, windows/darwin = distribution targets
+  binaryTargets = ["native", "windows", "darwin", "darwin-arm64"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -290,4 +292,55 @@ model Booking {
   @@index([status])
   @@index([startTime])
   @@map("bookings")
+}
+
+model DailyBalance {
+  id               String   @id @default(cuid())
+  date             DateTime @unique
+  cashOpening      Float    @default(0)
+  onlineOpening    Float    @default(0)
+  homeCashOpening  Float    @default(0)
+  daysTotal        Float    @default(0)
+  remaining        Float    @default(0)
+  cashClosing      Float?
+  onlineClosing    Float?
+  homeCashClosing  Float?
+  shahuBankClosing Float?
+  profitLoss       Float?
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([date])
+  @@map("daily_balances")
+}
+
+model PartnerProfit {
+  id          String   @id @default(cuid())
+  month       Int
+  year        Int
+  partnerName String
+  amount      Float    @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([month, year, partnerName])
+  @@index([year, month])
+  @@map("partner_profits")
+}
+
+model PartnerLoan {
+  id          String   @id @default(cuid())
+  partnerName String
+  amount      Float
+  type        String   // borrow | repay
+  date        DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([partnerName])
+  @@index([date])
+  @@map("partner_loans")
 }
