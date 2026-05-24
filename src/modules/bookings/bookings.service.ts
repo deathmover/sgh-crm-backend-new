@@ -58,8 +58,9 @@ export class BookingsService {
     maxBookingDate.setDate(maxBookingDate.getDate() + 3);
     maxBookingDate.setHours(23, 59, 59, 999);
 
-    if (start <= now) {
-      throw new BadRequestException('Booking start time must be in the future');
+    const earliest = new Date(now.getTime() - 15 * 60 * 1000);
+    if (start < earliest) {
+      throw new BadRequestException('Booking start time cannot be more than 15 minutes in the past');
     }
 
     if (start > maxBookingDate) {
