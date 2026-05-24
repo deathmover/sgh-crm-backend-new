@@ -51,23 +51,6 @@ export class BookingsService {
 
     const start = new Date(startTime);
     const end = new Date(endTime);
-    const now = new Date();
-
-    // Validate 3-day booking window
-    const maxBookingDate = new Date();
-    maxBookingDate.setDate(maxBookingDate.getDate() + 3);
-    maxBookingDate.setHours(23, 59, 59, 999);
-
-    const earliest = new Date(now.getTime() - 15 * 60 * 1000);
-    if (start < earliest) {
-      throw new BadRequestException('Booking start time cannot be more than 15 minutes in the past');
-    }
-
-    if (start > maxBookingDate) {
-      throw new BadRequestException(
-        'Bookings can only be made up to 3 days in advance',
-      );
-    }
 
     if (end <= start) {
       throw new BadRequestException('End time must be after start time');
