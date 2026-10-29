@@ -6,6 +6,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
+import { toLocalDateKey } from '../../common/utils/date-range';
 import { DateRangeQueryDto } from './dto/date-range-query.dto';
 
 @ApiTags('Analytics')
@@ -77,8 +78,9 @@ export class AnalyticsController {
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      query.startDate = startOfMonth.toISOString().split('T')[0];
-      query.endDate = endOfMonth.toISOString().split('T')[0];
+      // toISOString() is UTC: on an IST machine this gave the last day of the previous month
+      query.startDate = toLocalDateKey(startOfMonth);
+      query.endDate = toLocalDateKey(endOfMonth);
     }
     return this.analyticsService.getRevenueReport(
       query.startDate,

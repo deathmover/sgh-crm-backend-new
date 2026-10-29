@@ -9,6 +9,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ToRupees } from '../../../common/decorators/to-rupees.decorator';
 
 export class CreateEntryDto {
   @ApiProperty({ example: 'clxxx...customer-id' })
@@ -38,6 +39,7 @@ export class CreateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   cashAmount?: number;
 
   @ApiPropertyOptional({ example: 50, description: 'Advance online payment' })
@@ -45,6 +47,7 @@ export class CreateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   onlineAmount?: number;
 
   @ApiPropertyOptional({ example: 0, description: 'Advance credit amount' })
@@ -52,6 +55,7 @@ export class CreateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   creditAmount?: number;
 
   @ApiPropertyOptional({ example: 'PC-5', description: 'PC/Machine unit number' })
@@ -64,6 +68,7 @@ export class CreateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   discount?: number;
 
   @ApiPropertyOptional({ example: 50, description: 'Total beverages cost' })
@@ -71,12 +76,21 @@ export class CreateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   beveragesAmount?: number;
 
   @ApiPropertyOptional({ example: 'Customer requested mid-end PC' })
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({ example: 180, description: 'Operator-adjusted total (play - discount + beverages); overrides the calculated amount' })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  @ToRupees()
+  finalAmount?: number;
 
   @ApiPropertyOptional({ example: 'clxxx...membership-id', description: 'Use hours from this membership (optional)' })
   @IsString()

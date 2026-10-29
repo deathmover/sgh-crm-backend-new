@@ -2,7 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsNotEmpty,
   IsDateString,
-  IsInt,
   Min,
   IsString,
   IsIn,
@@ -10,6 +9,7 @@ import {
   IsNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ToRupees } from '../../../common/decorators/to-rupees.decorator';
 
 export class EndEntryDto {
   @ApiProperty({ example: '2025-09-30T12:30:00Z' })
@@ -21,15 +21,20 @@ export class EndEntryDto {
     example: 150,
     description: 'Admin can override the calculated final amount',
   })
-  @IsInt()
+  // Was @IsInt(), which rejected any amount with paise; now rounded to whole rupees
+  @IsNumber()
   @Min(0)
   @IsOptional()
+  @Type(() => Number)
+  @ToRupees()
   finalAmount?: number;
 
-  @ApiProperty({ example: 'cash', enum: ['cash', 'online', 'credit'] })
+  // 'membership' is what the UI sends for membership sessions; it used to be
+  // rejected, so those sessions could never be ended manually.
+  @ApiProperty({ example: 'cash', enum: ['cash', 'online', 'credit', 'membership'] })
   @IsString()
   @IsNotEmpty()
-  @IsIn(['cash', 'online', 'credit'])
+  @IsIn(['cash', 'online', 'credit', 'membership'])
   paymentType: string;
 
   // Split payment fields (optional)
@@ -38,6 +43,7 @@ export class EndEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   cashAmount?: number;
 
   @ApiPropertyOptional({ example: 50, description: 'Amount paid online' })
@@ -45,6 +51,7 @@ export class EndEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   onlineAmount?: number;
 
   @ApiPropertyOptional({ example: 0, description: 'Amount in credit' })
@@ -52,6 +59,7 @@ export class EndEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   creditAmount?: number;
 
   @ApiPropertyOptional({ example: 'Applied 10% discount' })

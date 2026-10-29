@@ -35,9 +35,10 @@ model Customer {
   pendingCredit Float                @default(0)
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
-  entries       Entry[]
-  memberships   CustomerMembership[]
-  bookings      Booking[]
+  entries        Entry[]
+  memberships    CustomerMembership[]
+  bookings       Booking[]
+  creditPayments CreditPayment[]
 
   @@index([phone])
   @@index([name])
@@ -52,6 +53,7 @@ model Machine {
   hourlyRate     Int
   halfHourlyRate Int?
   packageRates   Json?     // { "3": 130, "5": 200, "12": 500 } hours as keys
+  controllerRates Json?    // PlayStation etc: { "1": { "hourly": 100 }, "2": { "hourly": 180, "halfHourly": 100 } }
   isActive       Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -81,6 +83,7 @@ model Entry {
   cashAmount         Int                 @default(0) // Amount paid in cash
   onlineAmount       Int                 @default(0) // Amount paid online
   creditAmount       Int                 @default(0) // Amount in credit
+  creditPaid         Int                 @default(0) // Credit later settled via pay-credit (money counted on the payment day)
   pcNumber           String?             // PC/Machine unit number
   beverages          Json?               // Beverages sold: { "item": "quantity" }
   beveragesAmount    Int                 @default(0) // Total beverages cost
@@ -98,6 +101,7 @@ model Entry {
   @@index([customerId])
   @@index([machineId])
   @@index([createdAt])
+  @@index([startTime])
   @@index([paymentType])
   @@index([paymentStatus])
   @@index([isDeleted])
@@ -292,6 +296,24 @@ model Booking {
   @@index([status])
   @@index([startTime])
   @@map("bookings")
+}
+
+model CreditPayment {
+  id          String   @id @default(cuid())
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId  String
+  cashAmount  Float    @default(0)
+  onlineAmount Float   @default(0)
+  totalAmount Float
+  notes       String?
+  // Payments recorded before 2026-10-29 were added onto the old entries' cash/online,
+  // so they're already inside those days' totals. Newer payments are counted on their own day.
+  addedToEntryTotals Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("credit_payments")
 }
 
 model DailyBalance {

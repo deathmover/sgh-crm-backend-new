@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, IsNumber, IsPositive, IsDateString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ToRupees } from '../../../common/decorators/to-rupees.decorator';
 
 export class UpdateEntryDto {
   @ApiPropertyOptional({ example: 'clxxx...customer-id' })
@@ -30,6 +31,7 @@ export class UpdateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   cashAmount?: number;
 
   @ApiPropertyOptional({ example: 50, description: 'Advance online payment' })
@@ -37,6 +39,7 @@ export class UpdateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   onlineAmount?: number;
 
   @ApiPropertyOptional({ example: 0, description: 'Advance credit amount' })
@@ -44,6 +47,7 @@ export class UpdateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   creditAmount?: number;
 
   @ApiPropertyOptional({ example: 'PC-5', description: 'PC/Machine unit number' })
@@ -60,6 +64,7 @@ export class UpdateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   beveragesAmount?: number;
 
   @ApiPropertyOptional({ example: 20, description: 'Discount applied' })
@@ -67,6 +72,7 @@ export class UpdateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   discount?: number;
 
   @ApiPropertyOptional({ example: 150, description: 'Final amount (for ended sessions)' })
@@ -74,6 +80,7 @@ export class UpdateEntryDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   finalAmount?: number;
 
   @ApiPropertyOptional({ example: 'Updated notes' })

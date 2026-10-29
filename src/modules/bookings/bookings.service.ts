@@ -225,9 +225,24 @@ export class BookingsService {
     // Note: Slot availability check removed as per requirements
     // Bookings can be updated even if time slots overlap
 
+    const newStart = startTime ? new Date(startTime) : booking.startTime;
+    const newEnd = endTime ? new Date(endTime) : booking.endTime;
+    if (newEnd <= newStart) {
+      throw new BadRequestException('End time must be after start time');
+    }
+
+    // findAll({ date }) filters on bookingDate, so moving a booking to another
+    // day must move bookingDate too (it used to stay listed under the old day)
+    let bookingDate: Date | undefined;
+    if (startTime) {
+      bookingDate = new Date(newStart);
+      bookingDate.setHours(0, 0, 0, 0);
+    }
+
     return this.prisma.booking.update({
       where: { id },
       data: {
+        ...(bookingDate && { bookingDate }),
         ...(machineId && { machineId }),
         ...(pcNumber !== undefined && { pcNumber }),
         ...(startTime && { startTime: new Date(startTime) }),
@@ -266,28 +281,32 @@ export class BookingsService {
 
     // Calculate estimated cost and final amount
     const roundedDuration = this.machinesService.roundDuration(booking.duration);
-    let estimatedCost = await this.machinesService.calculateCost(
-      booking.machineId,
-      roundedDuration,
-    );
-
-    // For PS5 machines, multiply by number of controllers
-    if (booking.machine.type === 'ps5' && booking.pcNumber) {
-      const controllers = parseInt(booking.pcNumber) || 1;
-      estimatedCost = estimatedCost * (controllers > 0 ? controllers : 1);
-    }
+    const estimatedCost = await this.machinesService.calculateSessionCost(booking.machineId, roundedDuration, booking.pcNumber);
 
     // Calculate final amount: (cost - discount)
     const finalAmount = Math.max(0, estimatedCost - booking.discount);
 
+    // Claim the booking first with a conditional update, so a double click or
+    // retry can't create two sessions for one booking
+    const claimed = await this.prisma.booking.updateMany({
+      where: { id, status: 'CONFIRMED' },
+      data: { status: 'CHECKED_IN', checkedInAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      throw new BadRequestException('Booking was already checked in');
+    }
+
     // Create entry from booking
-    const entry = await this.prisma.entry.create({
+    let entry;
+    try {
+      entry = await this.prisma.entry.create({
       data: {
         customerId: booking.customerId,
         machineId: booking.machineId,
         pcNumber: booking.pcNumber,
         startTime: new Date(), // Start now
         predefinedDuration: booking.duration,
+        duration: roundedDuration, // Shown on the daily sheet, same as manual entries
         roundedDuration,
         cost: estimatedCost,
         discount: booking.discount,
@@ -313,13 +332,19 @@ export class BookingsService {
         },
       },
     });
+    } catch (error) {
+      // Release the booking so it can be checked in again
+      await this.prisma.booking.update({
+        where: { id },
+        data: { status: 'CONFIRMED', checkedInAt: null },
+      });
+      throw error;
+    }
 
-    // Update booking status and link to entry
+    // Link booking to entry
     const updatedBooking = await this.prisma.booking.update({
       where: { id },
       data: {
-        status: 'CHECKED_IN',
-        checkedInAt: new Date(),
         entryId: entry.id,
       },
       include: {

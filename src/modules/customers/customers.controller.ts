@@ -21,6 +21,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { BulkImportCustomersDto } from './dto/bulk-import.dto';
+import { PayCreditDto } from './dto/pay-credit.dto';
 
 @ApiTags('Customers')
 @ApiBearerAuth()
@@ -123,9 +124,15 @@ export class CustomersController {
   @ApiOperation({ summary: 'Pay off customer credit' })
   payCredit(
     @Param('id') id: string,
-    @Body() paymentDto: { cashAmount: number; onlineAmount: number },
+    @Body() paymentDto: PayCreditDto,
   ) {
     return this.customersService.payCredit(id, paymentDto);
+  }
+
+  @Get(':id/credit-history')
+  @ApiOperation({ summary: 'Get credit payment history for a customer' })
+  getCreditHistory(@Param('id') id: string) {
+    return this.customersService.getCreditHistory(id);
   }
 
   @Get(':id')

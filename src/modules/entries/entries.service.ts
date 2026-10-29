@@ -14,6 +14,11 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { EndEntryDto } from './dto/end-entry.dto';
 import { EntryQueryDto } from './dto/entry-query.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { dayRange, dateRange } from '../../common/utils/date-range';
+import { getOtherCollections } from '../../common/utils/collections';
+
+const paymentStatusFor = (totalPaid: number, finalAmount: number) =>
+  totalPaid >= finalAmount ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid';
 
 @Injectable()
 export class EntriesService {
@@ -25,7 +30,7 @@ export class EntriesService {
   ) {}
 
   async create(createEntryDto: CreateEntryDto) {
-    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, beveragesAmount, notes, useMembershipId } =
+    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, beveragesAmount, notes, useMembershipId, finalAmount: finalAmountOverride } =
       createEntryDto;
 
     // Verify customer exists
@@ -138,16 +143,8 @@ export class EntriesService {
 
     if (predefinedDuration) {
       roundedDuration = this.machinesService.roundDuration(predefinedDuration);
-      estimatedCost = await this.machinesService.calculateCost(
-        machineId,
-        roundedDuration,
-      );
-
-      // For PS5 machines, multiply by number of controllers
-      if (machine.type === 'ps5' && pcNumber) {
-        const controllers = parseInt(pcNumber) || 1;
-        estimatedCost = estimatedCost * (controllers > 0 ? controllers : 1);
-      }
+      // Includes per-controller pricing for PlayStation
+      estimatedCost = await this.machinesService.calculateSessionCost(machineId, roundedDuration, pcNumber);
 
       estimatedFinalAmount = estimatedCost;
 
@@ -163,16 +160,25 @@ export class EntriesService {
         estimatedFinalAmount = estimatedFinalAmount + beverages;
       }
 
+      // Operator edited the amount in the dialog (already includes discount and beverages)
+      if (finalAmountOverride !== undefined && finalAmountOverride >= 0) {
+        estimatedFinalAmount = finalAmountOverride;
+      }
+
       // If using membership, deduct EXACT hours (not rounded)
       if (membershipId && membership) {
-        const hoursToDeduct = predefinedDuration / 60; // Use exact minutes, not rounded
-        membershipHours = hoursToDeduct;
-        await this.membershipsService.deductHours(membershipId, hoursToDeduct);
+        membershipHours = predefinedDuration / 60; // Use exact minutes, not rounded
       }
     }
 
+    // Membership sessions without a fixed duration have nothing to deduct, so
+    // they would play for free; require a duration up front instead.
+    if (membershipId && !membershipHours) {
+      throw new BadRequestException('Set an expected duration to use membership hours');
+    }
+
     // Create entry with initial values
-    return this.prisma.entry.create({
+    const created = await this.prisma.entry.create({
       data: {
         customerId,
         machineId,
@@ -206,6 +212,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
         membership: {
@@ -215,6 +222,18 @@ export class EntriesService {
         },
       },
     });
+
+    // Deduct hours only once the entry exists, so a failed create can't eat them
+    if (membershipId && membershipHours) {
+      try {
+        await this.membershipsService.deductHours(membershipId, membershipHours);
+      } catch (error) {
+        await this.prisma.entry.delete({ where: { id: created.id } });
+        throw error;
+      }
+    }
+
+    return created;
   }
 
   async endEntry(id: string, endEntryDto: EndEntryDto, autoEnded = false) {
@@ -247,16 +266,7 @@ export class EntriesService {
     const roundedDuration = this.machinesService.roundDuration(durationMinutes);
 
     // Calculate cost based on rounded duration
-    let calculatedCost = await this.machinesService.calculateCost(
-      entry.machineId,
-      roundedDuration,
-    );
-
-    // For PS5 machines, multiply by number of controllers
-    if (entry.machine.type === 'ps5' && entry.pcNumber) {
-      const controllers = parseInt(entry.pcNumber) || 1;
-      calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
-    }
+    const calculatedCost = await this.machinesService.calculateSessionCost(entry.machineId, roundedDuration, entry.pcNumber);
 
     // Determine final amount:
     // 1. If user explicitly provides finalAmount in endEntryDto, use it AS-IS (already includes beverages and discount)
@@ -266,7 +276,14 @@ export class EntriesService {
     const discount = entry.discount || 0;
     let finalAmount: number;
 
-    if (endEntryDto.finalAmount && endEntryDto.finalAmount > 0) {
+    if (entry.membershipId) {
+      // Play time is covered by membership hours; finalAmount was 0 at create, which
+      // used to fall through to the "calculate from duration" branch and bill the
+      // full play cost (leaving every membership session marked unpaid).
+      finalAmount = endEntryDto.finalAmount && endEntryDto.finalAmount > 0
+        ? endEntryDto.finalAmount
+        : entry.finalAmount || 0;
+    } else if (endEntryDto.finalAmount && endEntryDto.finalAmount > 0) {
       // User explicitly provided amount - treat as complete total (already includes beverages and discount)
       finalAmount = endEntryDto.finalAmount;
     } else if (entry.finalAmount > 0) {
@@ -291,15 +308,9 @@ export class EntriesService {
     creditAmount += newCreditAmount;
 
     // Calculate total actually paid (cash + online + explicit credit)
-    const totalPaid = cashAmount + onlineAmount + creditAmount;
+    const totalPaid = cashAmount + onlineAmount + creditAmount + (entry.creditPaid || 0);
 
-    // Calculate payment status
-    let paymentStatus = 'unpaid';
-    if (totalPaid >= finalAmount) {
-      paymentStatus = 'paid';
-    } else if (totalPaid > 0) {
-      paymentStatus = 'partial';
-    }
+    const paymentStatus = paymentStatusFor(totalPaid, finalAmount);
 
     // Combine notes
     const combinedNotes = [entry.notes, endEntryDto.notes]
@@ -334,6 +345,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
       },
@@ -355,22 +367,12 @@ export class EntriesService {
 
     const where: any = {};
 
-    // Date filtering
+    // Date filtering by session start (local calendar days; endDate inclusive).
+    // createdAt put backdated entries on the day they were typed in.
     if (date) {
-      const startOfDay = new Date(date);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(date);
-      endOfDay.setHours(23, 59, 59, 999);
-
-      where.createdAt = {
-        gte: startOfDay,
-        lte: endOfDay,
-      };
+      where.startTime = dayRange(date);
     } else if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+      where.startTime = dateRange(startDate, endDate);
     }
 
     if (customerId) where.customerId = customerId;
@@ -398,6 +400,7 @@ export class EntriesService {
               hourlyRate: true,
               halfHourlyRate: true,
               packageRates: true,
+              controllerRates: true,
             },
           },
           membership: {
@@ -469,6 +472,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
         membership: {
@@ -487,17 +491,12 @@ export class EntriesService {
     });
   }
 
-  async getDailySheet(date: string) {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-
+  async getDailySheet(date?: string) {
+    // Without a date this used to build an Invalid Date and fail; default to today
+    const dayWindow = dayRange(date || undefined);
+    // Sessions belong to the day they started, not the day they were entered
     const dateFilter = {
-      createdAt: {
-        gte: startOfDay,
-        lte: endOfDay,
-      },
+      startTime: dayWindow,
       isDeleted: false,
     };
 
@@ -515,6 +514,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
       },
@@ -594,9 +594,30 @@ export class EntriesService {
       }),
     ]);
 
-    const cashRevenue = cashData._sum.cashAmount || 0;
-    const onlineRevenue = onlineData._sum.onlineAmount || 0;
+    const sessionCash = cashData._sum.cashAmount || 0;
+    const sessionOnline = onlineData._sum.onlineAmount || 0;
     const creditRevenue = creditData._sum.creditAmount || 0;
+
+    // Credit settled and memberships sold today are real money in the drawer today
+    const [other, creditPayments, membershipSales] = await Promise.all([
+      getOtherCollections(this.prisma, dayWindow),
+      this.prisma.creditPayment.findMany({
+        where: { createdAt: dayWindow, addedToEntryTotals: false },
+        include: { customer: { select: { id: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.customerMembership.findMany({
+        where: { purchaseDate: dayWindow, status: { not: 'cancelled' } },
+        include: {
+          customer: { select: { id: true, name: true } },
+          plan: { select: { name: true } },
+        },
+        orderBy: { purchaseDate: 'desc' },
+      }),
+    ]);
+
+    const cashRevenue = sessionCash + other.cash;
+    const onlineRevenue = sessionOnline + other.online;
     const totalRevenue = cashRevenue + onlineRevenue;
 
     // Fix: Fill in missing duration if start and end times exist
@@ -620,6 +641,34 @@ export class EntriesService {
         creditRevenue,
         totalEntries,
         activeEntries,
+        sessionRevenue: sessionCash + sessionOnline,
+        sessionCash,
+        sessionOnline,
+        creditCollected: other.creditCash + other.creditOnline,
+        creditCollectedCash: other.creditCash,
+        creditCollectedOnline: other.creditOnline,
+        membershipSales: other.membershipCash + other.membershipOnline,
+        membershipCash: other.membershipCash,
+        membershipOnline: other.membershipOnline,
+      },
+      collections: {
+        creditPayments: creditPayments.map((p) => ({
+          id: p.id,
+          customer: p.customer,
+          cashAmount: p.cashAmount,
+          onlineAmount: p.onlineAmount,
+          totalAmount: p.totalAmount,
+          notes: p.notes,
+          createdAt: p.createdAt,
+        })),
+        membershipSales: membershipSales.map((m) => ({
+          id: m.id,
+          customer: m.customer,
+          planName: m.plan?.name,
+          paymentMode: m.paymentMode,
+          paymentAmount: m.paymentAmount,
+          purchaseDate: m.purchaseDate,
+        })),
       },
     };
   }
@@ -644,37 +693,47 @@ export class EntriesService {
 
       if (predefinedDuration && predefinedDuration > 0) {
         const roundedDuration = this.machinesService.roundDuration(predefinedDuration);
-        let calculatedCost = await this.machinesService.calculateCost(
-          machineId,
-          roundedDuration,
-        );
-
-        // For PS5 machines, multiply by number of controllers
-        const machine = await this.prisma.machine.findUnique({
-          where: { id: machineId },
-        });
-
-        if (machine && machine.type === 'ps5' && pcNumber) {
-          const controllers = parseInt(pcNumber) || 1;
-          calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
-        }
+        const calculatedCost = await this.machinesService.calculateSessionCost(machineId, roundedDuration, pcNumber);
 
         dataToUpdate.cost = calculatedCost;
         dataToUpdate.roundedDuration = roundedDuration;
         dataToUpdate.duration = predefinedDuration; // Update actual duration field
 
-        // If session has ended, recalculate endTime based on new duration
-        if (entry.endTime && entry.startTime) {
-          const newEndTime = new Date(entry.startTime);
-          newEndTime.setMinutes(newEndTime.getMinutes() + predefinedDuration);
+        const startTime = new Date(updateData.startTime || entry.startTime);
+        const newEndTime = new Date(startTime.getTime() + predefinedDuration * 60_000);
+
+        if (entry.endTime && entry.autoEnded && newEndTime > new Date()) {
+          // The cron auto-ended this session at its old limit and the operator is
+          // now extending it: reopen it, otherwise it stays "ended" with an end
+          // time in the future and never alerts or auto-ends again.
+          dataToUpdate.endTime = null;
+          dataToUpdate.autoEnded = false;
+        } else if (entry.endTime) {
+          // If session has ended, recalculate endTime based on new duration
           dataToUpdate.endTime = newEndTime;
+        }
+
+        // Membership sessions pay in hours: charge/refund the difference
+        if (entry.membershipId && predefinedDuration !== entry.predefinedDuration) {
+          const deltaHours = (predefinedDuration - (entry.predefinedDuration || 0)) / 60;
+          if (deltaHours > 0) {
+            await this.membershipsService.deductHours(entry.membershipId, deltaHours);
+          } else {
+            await this.membershipsService.refundHours(entry.membershipId, -deltaHours);
+          }
+          dataToUpdate.membershipHours = predefinedDuration / 60;
         }
       }
     }
 
+    // Membership play time is never charged in money
+    if (entry.membershipId && updateData.finalAmount === undefined) {
+      dataToUpdate.finalAmount = entry.finalAmount || 0;
+    }
+
     // Recalculate finalAmount if beverages, discount, or duration changed
     // But only if client didn't explicitly provide finalAmount
-    if (needsRecalculation && updateData.finalAmount === undefined) {
+    if (needsRecalculation && updateData.finalAmount === undefined && !entry.membershipId) {
       const effectiveCost = dataToUpdate.cost !== undefined
         ? dataToUpdate.cost
         : entry.cost || 0;
@@ -716,16 +775,8 @@ export class EntriesService {
       updateData.predefinedDuration !== undefined;
 
     if (amountsChanged && effectiveFinalAmount !== undefined) {
-      const totalPaid = effectiveCash + effectiveOnline + effectiveCredit;
-
-      let paymentStatus = 'unpaid';
-      if (totalPaid >= effectiveFinalAmount) {
-        paymentStatus = 'paid';
-      } else if (totalPaid > 0) {
-        paymentStatus = 'partial';
-      }
-
-      dataToUpdate.paymentStatus = paymentStatus;
+      const totalPaid = effectiveCash + effectiveOnline + effectiveCredit + (entry.creditPaid || 0);
+      dataToUpdate.paymentStatus = paymentStatusFor(totalPaid, effectiveFinalAmount);
     }
 
     // Allow updating ended entries (for PC number, beverages, notes, payment)
@@ -744,6 +795,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
       },
@@ -754,6 +806,11 @@ export class EntriesService {
     const entry = await this.findOne(id);
 
     // Note: pendingCredit is calculated dynamically from entries, no need to update customer table
+
+    // Give the membership its hours back; they were deducted when the entry was created
+    if (!entry.isDeleted && entry.membershipId && entry.membershipHours) {
+      await this.membershipsService.refundHours(entry.membershipId, entry.membershipHours);
+    }
 
     return this.prisma.entry.update({
       where: { id },
@@ -773,6 +830,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
       },
@@ -801,6 +859,7 @@ export class EntriesService {
               hourlyRate: true,
               halfHourlyRate: true,
               packageRates: true,
+              controllerRates: true,
             },
           },
         },
@@ -832,6 +891,11 @@ export class EntriesService {
 
     // Note: pendingCredit is calculated dynamically from entries, no need to update customer table
 
+    // Re-take the hours refunded on soft delete
+    if (entry.membershipId && entry.membershipHours) {
+      await this.membershipsService.deductHours(entry.membershipId, entry.membershipHours);
+    }
+
     return this.prisma.entry.update({
       where: { id },
       data: {
@@ -846,6 +910,11 @@ export class EntriesService {
 
     // Note: pendingCredit is calculated dynamically from entries, no need to update customer table
 
+    // Soft-deleted entries were already refunded
+    if (!entry.isDeleted && entry.membershipId && entry.membershipHours) {
+      await this.membershipsService.refundHours(entry.membershipId, entry.membershipHours);
+    }
+
     return this.prisma.entry.delete({
       where: { id },
     });
@@ -858,17 +927,10 @@ export class EntriesService {
     const totalPaid =
       updatePaymentDto.cashAmount +
       updatePaymentDto.onlineAmount +
-      updatePaymentDto.creditAmount;
+      updatePaymentDto.creditAmount +
+      (entry.creditPaid || 0);
 
-    // Calculate payment status
-    let paymentStatus: string;
-    if (totalPaid >= entry.finalAmount) {
-      paymentStatus = 'paid';
-    } else if (totalPaid > 0) {
-      paymentStatus = 'partial';
-    } else {
-      paymentStatus = 'unpaid';
-    }
+    const paymentStatus = paymentStatusFor(totalPaid, entry.finalAmount);
 
     return this.prisma.entry.update({
       where: { id },
@@ -891,6 +953,7 @@ export class EntriesService {
             hourlyRate: true,
             halfHourlyRate: true,
             packageRates: true,
+            controllerRates: true,
           },
         },
       },
@@ -909,22 +972,12 @@ export class EntriesService {
 
     const where: any = { isDeleted: false };
 
-    // Date filtering
+    // Date filtering by session start (local calendar days; endDate inclusive).
+    // createdAt put backdated entries on the day they were typed in.
     if (date) {
-      const startOfDay = new Date(date);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(date);
-      endOfDay.setHours(23, 59, 59, 999);
-
-      where.createdAt = {
-        gte: startOfDay,
-        lte: endOfDay,
-      };
+      where.startTime = dayRange(date);
     } else if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+      where.startTime = dateRange(startDate, endDate);
     }
 
     if (customerId) where.customerId = customerId;
@@ -1039,21 +1092,15 @@ export class EntriesService {
         const roundedDuration = this.machinesService.roundDuration(
           entry.predefinedDuration,
         );
-        let calculatedCost = await this.machinesService.calculateCost(
-          entry.machineId,
-          roundedDuration,
-        );
+        const calculatedCost = await this.machinesService.calculateSessionCost(entry.machineId, roundedDuration, entry.pcNumber);
 
-        // For PS5 machines, multiply by number of controllers
-        if (entry.machine.type === 'ps5' && entry.pcNumber) {
-          const controllers = parseInt(entry.pcNumber) || 1;
-          calculatedCost = calculatedCost * (controllers > 0 ? controllers : 1);
-        }
-
-        // Calculate final amount including discount and beverages
+        // Keep the amount agreed at create (it may have been edited by the operator);
+        // recalculate only when none was stored. Membership sessions stay at 0.
         const discount = entry.discount || 0;
         const beveragesAmount = entry.beveragesAmount || 0;
-        const finalAmountWithAdjustments = Math.max(0, calculatedCost - discount) + beveragesAmount;
+        const finalAmountWithAdjustments = entry.membershipId || entry.finalAmount > 0
+          ? entry.finalAmount
+          : Math.max(0, calculatedCost - discount) + beveragesAmount;
 
         // Pass the complete final amount (play cost - discount + beverages)
         const ended = await this.endEntry(

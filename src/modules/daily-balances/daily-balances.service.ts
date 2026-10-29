@@ -53,6 +53,11 @@ export class DailyBalancesService {
   async update(id: string, dto: UpdateDailyBalanceDto) {
     await this.findOne(id);
     const data: any = { ...dto };
+    // The UI sends null for a cleared field; these columns are non-nullable,
+    // which made the save fail with a 500
+    for (const key of ['cashOpening', 'onlineOpening', 'homeCashOpening', 'daysTotal', 'remaining']) {
+      if (data[key] === null) data[key] = 0;
+    }
     if (dto.date) {
       const date = new Date(dto.date);
       date.setHours(0, 0, 0, 0);

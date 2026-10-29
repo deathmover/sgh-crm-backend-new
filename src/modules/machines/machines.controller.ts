@@ -1,6 +1,7 @@
-import { Controller, Get, Param, Patch, Body, Post } from '@nestjs/common';
+import { Controller, Get, Param, Patch, Body, Post, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { MachinesService } from './machines.service';
+import type { ControllerRates } from './pricing';
 
 @ApiTags('Machines')
 @ApiBearerAuth()
@@ -24,9 +25,16 @@ export class MachinesController {
       units: number;
       hourlyRate: number;
       halfHourlyRate?: number;
+      controllerRates?: ControllerRates;
     },
   ) {
     return this.machinesService.create(createData);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete a machine (archived instead if it has history)' })
+  remove(@Param('id') id: string) {
+    return this.machinesService.remove(id);
   }
 
   @Get('available')
@@ -54,8 +62,9 @@ export class MachinesController {
     @Body()
     updateData: {
       hourlyRate?: number;
-      halfHourlyRate?: number;
+      halfHourlyRate?: number | null;
       packageRates?: Record<string, number>;
+      controllerRates?: ControllerRates | null;
     },
   ) {
     return this.machinesService.updateRates(id, updateData);

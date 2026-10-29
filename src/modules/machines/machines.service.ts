@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { costFromRates, sessionCost, type ControllerRates, type PricedMachine } from './pricing';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../config/database.config';
 
 @Injectable()
@@ -7,6 +9,7 @@ export class MachinesService {
 
   async findAll() {
     const machines = await this.prisma.machine.findMany({
+      where: { isActive: true }, // archived (deleted) machines keep their history but are hidden
       orderBy: { type: 'asc' },
       select: {
         id: true,
@@ -16,6 +19,7 @@ export class MachinesService {
         hourlyRate: true,
         halfHourlyRate: true,
         packageRates: true,
+        controllerRates: true,
         createdAt: true,
         _count: {
           select: { entries: true },
@@ -71,6 +75,7 @@ export class MachinesService {
   async getAvailableMachines() {
     // Get all machines with active (no endTime) entries count
     const machines = await this.prisma.machine.findMany({
+      where: { isActive: true },
       select: {
         id: true,
         name: true,
@@ -79,9 +84,11 @@ export class MachinesService {
         hourlyRate: true,
         halfHourlyRate: true,
         packageRates: true,
+        controllerRates: true,
         entries: {
           where: {
             endTime: null,
+            isDeleted: false, // soft-deleted running sessions used to hold the unit forever
           },
           select: {
             id: true,
@@ -98,98 +105,26 @@ export class MachinesService {
       hourlyRate: machine.hourlyRate,
       halfHourlyRate: machine.halfHourlyRate,
       packageRates: machine.packageRates,
+      controllerRates: machine.controllerRates,
       availableUnits: machine.units - machine.entries.length,
       isAvailable: machine.entries.length < machine.units,
     }));
   }
 
-  /**
-   * Calculate cost based on duration and machine pricing
-   * @param machineId - Machine ID
-   * @param durationMinutes - Duration in minutes
-   * @returns Calculated cost
-   */
-  async calculateCost(
-    machineId: string,
-    durationMinutes: number,
-  ): Promise<number> {
+  /** Cost for one unit at the machine's base rates (no controller pricing) */
+  async calculateCost(machineId: string, durationMinutes: number): Promise<number> {
     const machine = await this.findOne(machineId);
-    const durationHours = durationMinutes / 60;
+    return costFromRates(durationMinutes, machine as unknown as PricedMachine);
+  }
 
-    // Check for package rates first - use only ONE package, then calculate rest at hourly rates
-    if (machine.packageRates) {
-      const packageRates = machine.packageRates as Record<string, number>;
-      const packageHours = Object.keys(packageRates)
-        .map(Number)
-        .sort((a, b) => b - a);
-
-      for (const hours of packageHours) {
-        if (durationHours >= hours) {
-          // Use only ONE package (not multiple)
-          const packageCost = packageRates[hours.toString()];
-          const remainingHours = durationHours - hours;
-
-          // Calculate remaining time cost using the same logic as the regular calculation
-          const remainingMinutes = remainingHours * 60;
-          let remainingCost = 0;
-
-          if (remainingMinutes > 0) {
-            // If ≤ 30 minutes and half-hourly rate exists, use it
-            if (remainingMinutes <= 30 && machine.halfHourlyRate) {
-              remainingCost = machine.halfHourlyRate;
-            }
-            // For time > 30 minutes with half-hourly rate, calculate in blocks
-            else if (remainingMinutes > 30 && machine.halfHourlyRate) {
-              const fullHours = Math.floor(remainingMinutes / 60);
-              const remainingMins = remainingMinutes % 60;
-
-              remainingCost = fullHours * machine.hourlyRate;
-
-              if (remainingMins === 30) {
-                // Exactly 30 minutes remaining, use half-hourly rate
-                remainingCost += machine.halfHourlyRate;
-              } else if (remainingMins > 0) {
-                // Less than 30 minutes remaining, charge full hour
-                remainingCost += machine.hourlyRate;
-              }
-            }
-            // Default to hourly rate (for machines without half-hourly rate)
-            else {
-              remainingCost = Math.ceil(remainingHours) * machine.hourlyRate;
-            }
-          }
-
-          return packageCost + remainingCost;
-        }
-      }
-    }
-
-    // Calculate based on hourly/half-hourly rates
-    if (durationMinutes <= 30 && machine.halfHourlyRate) {
-      return machine.halfHourlyRate;
-    }
-
-    // For time > 30 minutes, calculate in blocks
-    // Example: 90 mins = 60 mins (1 hour) + 30 mins (half hour)
-    if (durationMinutes > 30 && machine.halfHourlyRate) {
-      const fullHours = Math.floor(durationMinutes / 60);
-      const remainingMinutes = durationMinutes % 60;
-
-      let cost = fullHours * machine.hourlyRate;
-
-      if (remainingMinutes === 30) {
-        // Exactly 30 minutes remaining, use half-hourly rate
-        cost += machine.halfHourlyRate;
-      } else if (remainingMinutes > 0) {
-        // Less than 30 minutes remaining, charge full hour
-        cost += machine.hourlyRate;
-      }
-
-      return cost;
-    }
-
-    // Default to hourly rate calculation (for machines without half-hourly rate)
-    return Math.ceil(durationHours) * machine.hourlyRate;
+  /**
+   * Play cost for a session, including per-controller pricing on PlayStation
+   * (pcNumber holds the controller count there). Replaces the
+   * "cost × controllers" logic that was copy-pasted in five places.
+   */
+  async calculateSessionCost(machineId: string, roundedMinutes: number, pcNumber?: string | null): Promise<number> {
+    const machine = await this.findOne(machineId);
+    return sessionCost(machine as unknown as PricedMachine, roundedMinutes, pcNumber);
   }
 
   /**
@@ -215,6 +150,7 @@ export class MachinesService {
     units: number;
     hourlyRate: number;
     halfHourlyRate?: number;
+    controllerRates?: ControllerRates;
   }) {
     return this.prisma.machine.create({
       data: {
@@ -223,6 +159,7 @@ export class MachinesService {
         units: createData.units,
         hourlyRate: createData.hourlyRate,
         halfHourlyRate: createData.halfHourlyRate || null,
+        ...(createData.controllerRates && { controllerRates: cleanControllerRates(createData.controllerRates) }),
         isActive: true,
       },
     });
@@ -232,16 +169,23 @@ export class MachinesService {
     id: string,
     updateData: {
       hourlyRate?: number;
-      halfHourlyRate?: number;
+      halfHourlyRate?: number | null;
       packageRates?: Record<string, number>;
+      controllerRates?: ControllerRates | null;
     },
   ) {
     const machine = await this.findOne(id);
 
     const dataToUpdate: any = {
       hourlyRate: updateData.hourlyRate ?? machine.hourlyRate,
-      halfHourlyRate: updateData.halfHourlyRate ?? machine.halfHourlyRate,
+      // null clears the half-hour rate (?? used to make that impossible)
+      halfHourlyRate: updateData.halfHourlyRate === undefined ? machine.halfHourlyRate : updateData.halfHourlyRate || null,
     };
+
+    if (updateData.controllerRates !== undefined) {
+      const cleaned = updateData.controllerRates ? cleanControllerRates(updateData.controllerRates) : {};
+      dataToUpdate.controllerRates = Object.keys(cleaned).length ? cleaned : Prisma.DbNull;
+    }
 
     if (updateData.packageRates !== undefined) {
       dataToUpdate.packageRates = updateData.packageRates;
@@ -252,4 +196,46 @@ export class MachinesService {
       data: dataToUpdate,
     });
   }
+
+  /**
+   * Machines with no history are deleted. Ones with past sessions or bookings
+   * are archived instead (hidden everywhere) so past revenue stays intact.
+   */
+  async remove(id: string) {
+    const machine = await this.findOne(id);
+
+    const [activeSessions, entries, bookings] = await Promise.all([
+      this.prisma.entry.count({ where: { machineId: id, endTime: null, isDeleted: false } }),
+      this.prisma.entry.count({ where: { machineId: id } }),
+      this.prisma.booking.count({ where: { machineId: id } }),
+    ]);
+
+    if (activeSessions > 0) {
+      throw new BadRequestException(
+        `${machine.name} has ${activeSessions} session${activeSessions === 1 ? '' : 's'} running. End ${activeSessions === 1 ? 'it' : 'them'} first.`,
+      );
+    }
+
+    if (entries === 0 && bookings === 0) {
+      await this.prisma.machine.delete({ where: { id } });
+      return { id, result: 'deleted' as const };
+    }
+
+    await this.prisma.machine.update({ where: { id }, data: { isActive: false } });
+    return { id, result: 'archived' as const };
+  }
+}
+
+/** Keep only rows with a valid controller count and a positive hourly price */
+function cleanControllerRates(rates: ControllerRates): ControllerRates {
+  const cleaned: ControllerRates = {};
+  for (const [count, rate] of Object.entries(rates)) {
+    const n = parseInt(count, 10);
+    const hourly = Math.round(Number(rate?.hourly));
+    if (n > 0 && hourly > 0) {
+      const halfHourly = Math.round(Number(rate?.halfHourly));
+      cleaned[String(n)] = { hourly, ...(halfHourly > 0 && { halfHourly }) };
+    }
+  }
+  return cleaned;
 }

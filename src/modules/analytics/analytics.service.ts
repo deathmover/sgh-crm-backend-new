@@ -1,9 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../config/database.config';
+import { dateRange, toLocalDateKey } from '../../common/utils/date-range';
+import { getOtherCollections } from '../../common/utils/collections';
 
 @Injectable()
 export class AnalyticsService {
   constructor(private prisma: PrismaService) {}
+
+  private async getOutstandingCredit(): Promise<number> {
+    const [manual, sessions] = await Promise.all([
+      this.prisma.customer.aggregate({ _sum: { pendingCredit: true } }),
+      this.prisma.entry.aggregate({
+        where: { isDeleted: false, creditAmount: { gt: 0 } },
+        _sum: { creditAmount: true },
+      }),
+    ]);
+    return (manual._sum.pendingCredit || 0) + (sessions._sum.creditAmount || 0);
+  }
 
   async getDashboardStats(date?: string, startDate?: string, endDate?: string) {
     let dateFilter: any;
@@ -17,7 +30,7 @@ export class AnalyticsService {
       end.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: start,
           lte: end,
         },
@@ -33,7 +46,7 @@ export class AnalyticsService {
       comparisonEnd.setHours(23, 59, 59, 999);
 
       comparisonFilter = {
-        createdAt: {
+        startTime: {
           gte: comparisonStart,
           lte: comparisonEnd,
         },
@@ -48,7 +61,7 @@ export class AnalyticsService {
       endOfDay.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: startOfDay,
           lte: endOfDay,
         },
@@ -61,7 +74,7 @@ export class AnalyticsService {
       const yesterdayEnd = new Date(endOfDay);
       yesterdayEnd.setDate(yesterdayEnd.getDate() - 1);
       comparisonFilter = {
-        createdAt: {
+        startTime: {
           gte: yesterdayStart,
           lte: yesterdayEnd,
         },
@@ -94,8 +107,17 @@ export class AnalyticsService {
       }),
     ]);
 
-    const cashRevenue = cashData._sum.cashAmount || 0;
-    const onlineRevenue = onlineData._sum.onlineAmount || 0;
+    // Credit settled and memberships sold in the period are counted on the day
+    // the money came in (they were missing from every revenue figure)
+    const [other, comparisonOther] = await Promise.all([
+      getOtherCollections(this.prisma, dateFilter.startTime),
+      getOtherCollections(this.prisma, comparisonFilter.startTime),
+    ]);
+
+    const sessionCash = cashData._sum.cashAmount || 0;
+    const sessionOnline = onlineData._sum.onlineAmount || 0;
+    const cashRevenue = sessionCash + other.cash;
+    const onlineRevenue = sessionOnline + other.online;
     const creditRevenue = creditData._sum.creditAmount || 0;
 
     // Comparison revenue for growth calculation
@@ -118,18 +140,17 @@ export class AnalyticsService {
 
     const comparisonRevenue =
       (comparisonCash._sum.cashAmount || 0) +
-      (comparisonOnline._sum.onlineAmount || 0);
+      (comparisonOnline._sum.onlineAmount || 0) +
+      comparisonOther.total;
     const currentRevenue = cashRevenue + onlineRevenue;
     const revenueGrowth =
       comparisonRevenue > 0
         ? ((currentRevenue - comparisonRevenue) / comparisonRevenue) * 100
         : 0;
 
-    // Pending credit (all time) - sum of all customer pendingCredit
-    const customers = await this.prisma.customer.findMany({
-      select: { pendingCredit: true },
-    });
-    const totalPendingCredit = customers.reduce((sum, c) => sum + c.pendingCredit, 0);
+    // Pending credit (all time). Session credit lives on entries; summing only
+    // customer.pendingCredit showed ~₹0 while customers actually owed money.
+    const totalPendingCredit = await this.getOutstandingCredit();
 
     // Total sessions for selected period
     const currentSessions = await this.prisma.entry.count({
@@ -181,6 +202,9 @@ export class AnalyticsService {
         online: onlineRevenue,
         credit: creditRevenue,
       },
+      sessionRevenue: sessionCash + sessionOnline,
+      creditCollected: other.creditCash + other.creditOnline,
+      membershipSales: other.membershipCash + other.membershipOnline,
       revenueGrowth: parseFloat(revenueGrowth.toFixed(2)),
       sessionsGrowth: parseFloat(sessionsGrowth.toFixed(2)),
       averageSessionDuration: durationData._avg.duration || 0,
@@ -191,13 +215,11 @@ export class AnalyticsService {
   async getMachineUsageStats(startDate?: string, endDate?: string) {
     const where: any = {
       endTime: { not: null },
+      isDeleted: false,
     };
 
     if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+      where.startTime = dateRange(startDate, endDate);
     }
 
     const machineStats = await this.prisma.entry.groupBy({
@@ -242,14 +264,14 @@ export class AnalyticsService {
 
     const entries = await this.prisma.entry.findMany({
       where: {
-        createdAt: {
+        startTime: {
           gte: sevenDaysAgo,
         },
         endTime: { not: null },
         isDeleted: false,
       },
       select: {
-        createdAt: true,
+        startTime: true,
         finalAmount: true,
         paymentType: true,
       },
@@ -262,7 +284,7 @@ export class AnalyticsService {
     >();
 
     entries.forEach((entry) => {
-      const date = entry.createdAt.toISOString().split('T')[0];
+      const date = toLocalDateKey(entry.startTime);
       if (!revenueByDate.has(date)) {
         revenueByDate.set(date, { cash: 0, online: 0, credit: 0 });
       }
@@ -293,13 +315,11 @@ export class AnalyticsService {
   async getPaymentTypeBreakdown(startDate?: string, endDate?: string) {
     const where: any = {
       endTime: { not: null },
+      isDeleted: false,
     };
 
     if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+      where.startTime = dateRange(startDate, endDate);
     }
 
     const paymentStats = await this.prisma.entry.groupBy({
@@ -334,7 +354,7 @@ export class AnalyticsService {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
 
-      where.createdAt = {
+      where.startTime = {
         gte: start,
         lte: end,
       };
@@ -381,10 +401,8 @@ export class AnalyticsService {
 
   async getRevenueReport(startDate: string, endDate: string) {
     const where = {
-      createdAt: {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      },
+      // lte new Date(endDate) was midnight, dropping almost all of the last day
+      startTime: dateRange(startDate, endDate),
       endTime: { not: null },
       isDeleted: false,
     };
@@ -427,7 +445,7 @@ export class AnalyticsService {
       end.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: start,
           lte: end,
         },
@@ -440,7 +458,7 @@ export class AnalyticsService {
       endOfDay.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: startOfDay,
           lte: endOfDay,
         },
@@ -448,7 +466,7 @@ export class AnalyticsService {
     }
 
     const entries = await this.prisma.entry.findMany({
-      where: dateFilter,
+      where: { ...dateFilter, isDeleted: false },
       select: {
         startTime: true,
         finalAmount: true,
@@ -492,14 +510,15 @@ export class AnalyticsService {
       end.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: start,
           lte: end,
         },
       };
 
       // Calculate total days for utilization rate
-      totalDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+      // start..end-of-day already spans whole days; the extra +1 understated utilization
+      totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
     } else {
       const targetDate = date ? new Date(date) : new Date();
       const startOfDay = new Date(targetDate);
@@ -508,7 +527,7 @@ export class AnalyticsService {
       endOfDay.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: startOfDay,
           lte: endOfDay,
         },
@@ -534,6 +553,7 @@ export class AnalyticsService {
             machineId: machine.id,
             ...dateFilter,
             endTime: { not: null },
+            isDeleted: false,
           },
           select: {
             duration: true,
@@ -580,7 +600,7 @@ export class AnalyticsService {
       end.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: start,
           lte: end,
         },
@@ -593,7 +613,7 @@ export class AnalyticsService {
       endOfDay.setHours(23, 59, 59, 999);
 
       dateFilter = {
-        createdAt: {
+        startTime: {
           gte: startOfDay,
           lte: endOfDay,
         },
@@ -644,6 +664,7 @@ export class AnalyticsService {
     // Group by PC number and calculate hours for each
     const pcUsageMap = new Map<string, {
       machineId: string;
+      pcNumber: string;
       minutes: number;
       count: number;
     }>();
@@ -652,6 +673,7 @@ export class AnalyticsService {
       const key = `${entry.machineId}-${entry.pcNumber}`;
       const existing = pcUsageMap.get(key) || {
         machineId: entry.machineId,
+        pcNumber: entry.pcNumber as string,
         minutes: 0,
         count: 0
       };
@@ -662,8 +684,9 @@ export class AnalyticsService {
 
     // Convert to array and add machine details
     const pcUtilizationWithMachines = await Promise.all(
-      Array.from(pcUsageMap.entries()).map(async ([key, data]) => {
-        const pcNumber = key.split('-')[1];
+      Array.from(pcUsageMap.values()).map(async (data) => {
+        // Parsing it back out of the key broke for ids/PC numbers containing '-'
+        const pcNumber = data.pcNumber;
         const machine = await this.prisma.machine.findUnique({
           where: { id: data.machineId },
           select: { name: true, type: true },
@@ -712,7 +735,7 @@ export class AnalyticsService {
     end.setHours(23, 59, 59, 999);
 
     const dateFilter = {
-      createdAt: { gte: start, lte: end },
+      startTime: { gte: start, lte: end },
       isDeleted: false,
     };
 
@@ -728,7 +751,10 @@ export class AnalyticsService {
       }),
     ]);
 
-    const totalInflow = (cashInflow._sum.cashAmount || 0) + (onlineInflow._sum.onlineAmount || 0);
+    const other = await getOtherCollections(this.prisma, { gte: start, lte: end });
+    const sessionInflow = (cashInflow._sum.cashAmount || 0) + (onlineInflow._sum.onlineAmount || 0);
+    // Include credit collected and membership sales, which were missing from inflow
+    const totalInflow = sessionInflow + other.total;
 
     // CASH OUTFLOW - Expenses
     const expensesByCategory = await this.prisma.expense.groupBy({
@@ -755,11 +781,8 @@ export class AnalyticsService {
     const profitMargin =
       totalInflow > 0 ? (netProfitLoss / totalInflow) * 100 : 0;
 
-    // PENDING CREDIT (Outstanding receivables) - sum from customers
-    const allCustomers = await this.prisma.customer.findMany({
-      select: { pendingCredit: true },
-    });
-    const outstandingReceivables = allCustomers.reduce((sum, c) => sum + c.pendingCredit, 0);
+    // PENDING CREDIT (Outstanding receivables): manual credit + session credit
+    const outstandingReceivables = await this.getOutstandingCredit();
 
     // MONTHLY TREND (Last 6 months)
     const monthlyTrend: Array<{
@@ -774,10 +797,10 @@ export class AnalyticsService {
       monthStart.setHours(0, 0, 0, 0);
       monthEnd.setHours(23, 59, 59, 999);
 
-      const [monthRevenue, monthExpenses] = await Promise.all([
+      const [monthRevenue, monthExpenses, monthOther] = await Promise.all([
         this.prisma.entry.aggregate({
           where: {
-            createdAt: { gte: monthStart, lte: monthEnd },
+            startTime: { gte: monthStart, lte: monthEnd },
             endTime: { not: null },
             isDeleted: false,
           },
@@ -789,11 +812,13 @@ export class AnalyticsService {
           },
           _sum: { amount: true },
         }),
+        getOtherCollections(this.prisma, { gte: monthStart, lte: monthEnd }),
       ]);
 
       const revenue =
         (monthRevenue._sum.cashAmount || 0) +
-        (monthRevenue._sum.onlineAmount || 0);
+        (monthRevenue._sum.onlineAmount || 0) +
+        monthOther.total;
       const expenses = monthExpenses._sum.amount || 0;
 
       monthlyTrend.push({
@@ -823,8 +848,11 @@ export class AnalyticsService {
       },
       cashFlow: {
         totalInflow,
-        cashInflow: cashInflow._sum.cashAmount || 0,
-        onlineInflow: onlineInflow._sum.onlineAmount || 0,
+        cashInflow: (cashInflow._sum.cashAmount || 0) + other.cash,
+        onlineInflow: (onlineInflow._sum.onlineAmount || 0) + other.online,
+        sessionInflow,
+        creditCollected: other.creditCash + other.creditOnline,
+        membershipSales: other.membershipCash + other.membershipOnline,
         totalOutflow,
         netCashFlow: totalInflow - totalOutflow,
       },

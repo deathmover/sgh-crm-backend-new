@@ -11,6 +11,7 @@ import { PrismaService } from '../../config/database.config';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
+import { PayCreditDto } from './dto/pay-credit.dto';
 
 @Injectable()
 export class CustomersService {
@@ -144,6 +145,7 @@ export class CustomersService {
       where: { id },
       include: {
         entries: {
+          where: { isDeleted: false },
           take: 10,
           orderBy: { createdAt: 'desc' },
           include: {
@@ -157,7 +159,7 @@ export class CustomersService {
           },
         },
         _count: {
-          select: { entries: true },
+          select: { entries: { where: { isDeleted: false } } },
         },
       },
     });
@@ -166,9 +168,9 @@ export class CustomersService {
       throw new NotFoundException('Customer not found');
     }
 
-    // Calculate total spent
+    // Calculate total spent (deleted sessions were being counted)
     const totalSpent = await this.prisma.entry.aggregate({
-      where: { customerId: id },
+      where: { customerId: id, isDeleted: false },
       _sum: { finalAmount: true },
     });
 
@@ -224,6 +226,29 @@ export class CustomersService {
   async remove(id: string) {
     await this.findOne(id);
 
+    // Entries, memberships, bookings and credit payments cascade-delete with the
+    // customer, which silently rewrote past days' revenue. Only allow deleting
+    // customers with no history.
+    const [entries, memberships, bookings, creditPayments, customer] = await Promise.all([
+      this.prisma.entry.count({ where: { customerId: id } }),
+      this.prisma.customerMembership.count({ where: { customerId: id } }),
+      this.prisma.booking.count({ where: { customerId: id } }),
+      this.prisma.creditPayment.count({ where: { customerId: id } }),
+      this.prisma.customer.findUnique({ where: { id }, select: { pendingCredit: true } }),
+    ]);
+    const history = [
+      entries && `${entries} session${entries === 1 ? '' : 's'}`,
+      memberships && `${memberships} membership${memberships === 1 ? '' : 's'}`,
+      bookings && `${bookings} booking${bookings === 1 ? '' : 's'}`,
+      creditPayments && `${creditPayments} credit payment${creditPayments === 1 ? '' : 's'}`,
+      (customer?.pendingCredit || 0) > 0 && 'pending credit',
+    ].filter(Boolean);
+    if (history.length > 0) {
+      throw new ConflictException(
+        `Cannot delete this customer: they have ${history.join(', ')}. Deleting would remove past revenue.`,
+      );
+    }
+
     return this.prisma.customer.delete({
       where: { id },
     });
@@ -271,20 +296,16 @@ export class CustomersService {
     };
   }
 
-  async payCredit(
-    customerId: string,
-    paymentDto: { cashAmount: number; onlineAmount: number },
-  ) {
-    // Get customer with current pending credit
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-      select: { id: true, pendingCredit: true },
+  async getCreditHistory(customerId: string) {
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    return this.prisma.creditPayment.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
     });
+  }
 
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
-
+  async payCredit(customerId: string, paymentDto: PayCreditDto) {
     const { cashAmount, onlineAmount } = paymentDto;
     const totalPayment = cashAmount + onlineAmount;
 
@@ -292,86 +313,99 @@ export class CustomersService {
       throw new ConflictException('Payment amount must be greater than 0');
     }
 
-    // Get all unpaid/partial entries for this customer (both active and ended)
-    const unpaidEntries = await this.prisma.entry.findMany({
-      where: {
-        customerId,
-        creditAmount: { gt: 0 },
-        isDeleted: false,
-      },
-      orderBy: { createdAt: 'asc' }, // Pay off oldest debts first
-    });
+    // One transaction: a failure part-way used to leave some entries paid with
+    // no CreditPayment record.
+    return this.prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.findUnique({
+        where: { id: customerId },
+        select: { id: true, pendingCredit: true },
+      });
 
-    // Check if customer has any pending credit (either from entries or customer balance)
-    if (unpaidEntries.length === 0 && (customer.pendingCredit || 0) <= 0) {
-      throw new ConflictException('Customer has no pending credit');
-    }
+      if (!customer) {
+        throw new NotFoundException('Customer not found');
+      }
 
-    let remainingPayment = totalPayment;
-    const updatedEntries: any[] = [];
+      // Get all unpaid/partial entries for this customer (both active and ended)
+      const unpaidEntries = await tx.entry.findMany({
+        where: {
+          customerId,
+          creditAmount: { gt: 0 },
+          isDeleted: false,
+        },
+        orderBy: { createdAt: 'asc' }, // Pay off oldest debts first
+      });
 
-    // First, pay off entry-based credits (from gaming sessions)
-    for (const entry of unpaidEntries) {
-      if (remainingPayment <= 0) break;
+      const entryCredit = unpaidEntries.reduce((sum, e) => sum + (e.creditAmount || 0), 0);
+      const totalOutstanding = entryCredit + (customer.pendingCredit || 0);
 
-      const entryCredit = entry.creditAmount || 0;
-      const paymentForEntry = Math.min(remainingPayment, entryCredit);
+      if (totalOutstanding <= 0) {
+        throw new ConflictException('Customer has no pending credit');
+      }
+      // The excess used to be recorded in history but applied nowhere
+      if (totalPayment > totalOutstanding) {
+        throw new ConflictException(
+          `Payment (₹${totalPayment}) exceeds pending credit (₹${totalOutstanding})`,
+        );
+      }
 
-      // Calculate how to split the payment (proportionally based on input)
-      const cashForEntry =
-        cashAmount > 0 ? (paymentForEntry * cashAmount) / totalPayment : 0;
-      const onlineForEntry =
-        onlineAmount > 0 ? (paymentForEntry * onlineAmount) / totalPayment : 0;
+      // Settle oldest session credit first. The money is NOT added to the old
+      // entry's cash/online any more: that put today's payment into the old
+      // day's totals, so the daily sheet never matched the cash drawer. It is
+      // counted on today's figures via the CreditPayment record below, and the
+      // entry tracks what was settled in creditPaid.
+      let remainingPayment = totalPayment;
+      const updatedEntries: any[] = [];
 
-      // Update entry with payment
-      const updatedEntry = await this.prisma.entry.update({
-        where: { id: entry.id },
+      for (const entry of unpaidEntries) {
+        if (remainingPayment <= 0) break;
+
+        const owed = entry.creditAmount || 0;
+        const paid = Math.min(remainingPayment, owed);
+        remainingPayment -= paid;
+        const newCredit = owed - paid;
+
+        const updatedEntry = await tx.entry.update({
+          where: { id: entry.id },
+          data: {
+            creditAmount: newCredit,
+            creditPaid: { increment: paid },
+            ...(newCredit === 0 && { paymentStatus: 'paid' }),
+          },
+        });
+        updatedEntries.push(updatedEntry);
+      }
+
+      // Whatever is left pays down the customer's manual/imported credit
+      let updatedCustomerCredit = customer.pendingCredit || 0;
+      if (remainingPayment > 0 && updatedCustomerCredit > 0) {
+        updatedCustomerCredit -= Math.min(remainingPayment, updatedCustomerCredit);
+        await tx.customer.update({
+          where: { id: customerId },
+          data: { pendingCredit: updatedCustomerCredit },
+        });
+      }
+
+      // Save credit payment history record
+      await tx.creditPayment.create({
         data: {
-          cashAmount: (entry.cashAmount || 0) + cashForEntry,
-          onlineAmount: (entry.onlineAmount || 0) + onlineForEntry,
-          creditAmount: entryCredit - paymentForEntry,
-          paymentStatus:
-            entryCredit - paymentForEntry === 0
-              ? 'paid'
-              : (entry.cashAmount || 0) +
-                    (entry.onlineAmount || 0) +
-                    cashForEntry +
-                    onlineForEntry >
-                  0
-                ? 'partial'
-                : 'unpaid',
+          customerId,
+          cashAmount,
+          onlineAmount,
+          totalAmount: totalPayment,
+          notes: paymentDto.notes,
+          addedToEntryTotals: false, // counted on the day it was received
         },
       });
 
-      updatedEntries.push(updatedEntry);
-      remainingPayment -= paymentForEntry;
-    }
-
-    // Second, if there's remaining payment, apply it to customer's pending credit
-    let updatedCustomerCredit = customer.pendingCredit || 0;
-    if (remainingPayment > 0 && updatedCustomerCredit > 0) {
-      const paymentForCustomerCredit = Math.min(
-        remainingPayment,
-        updatedCustomerCredit,
-      );
-      updatedCustomerCredit -= paymentForCustomerCredit;
-      remainingPayment -= paymentForCustomerCredit;
-
-      // Update customer's pending credit
-      await this.prisma.customer.update({
-        where: { id: customerId },
-        data: { pendingCredit: updatedCustomerCredit },
-      });
-    }
-
-    return {
-      success: true,
-      totalPayment,
-      entriesUpdated: updatedEntries.length,
-      remainingCredit: remainingPayment,
-      customerCreditPaid: (customer.pendingCredit || 0) - updatedCustomerCredit,
-      newCustomerCredit: updatedCustomerCredit,
-    };
+      return {
+        success: true,
+        totalPayment,
+        entriesUpdated: updatedEntries.length,
+        customerCreditPaid: (customer.pendingCredit || 0) - updatedCustomerCredit,
+        newCustomerCredit: updatedCustomerCredit,
+        remainingCredit: totalOutstanding - totalPayment,
+      };
+    });
   }
 
   async exportToCsv(query: CustomerQueryDto): Promise<string> {

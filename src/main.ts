@@ -59,7 +59,9 @@ async function bootstrap() {
   });
 
   const port = configService.get<number>('PORT') || 3000;
-  await app.listen(port);
+  // Electron sets HOST=127.0.0.1 so other PCs on the café LAN can't reach the API
+  const host = configService.get<string>('HOST');
+  await (host ? app.listen(port, host) : app.listen(port));
 
   logger.log(`🚀 Application is running on: http://localhost:${port}`);
   logger.log(`📚 API Documentation: http://localhost:${port}/api/docs`);

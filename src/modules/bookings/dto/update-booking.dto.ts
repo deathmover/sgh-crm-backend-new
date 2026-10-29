@@ -8,6 +8,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ToRupees } from '../../../common/decorators/to-rupees.decorator';
 
 export class UpdateBookingDto {
   @ApiPropertyOptional({ example: 'clxxx...machine-id' })
@@ -47,6 +48,7 @@ export class UpdateBookingDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   cashAmount?: number;
 
   @ApiPropertyOptional({ example: 50, description: 'Advance online payment' })
@@ -54,6 +56,7 @@ export class UpdateBookingDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   onlineAmount?: number;
 
   @ApiPropertyOptional({ example: 0, description: 'Advance credit amount' })
@@ -61,6 +64,7 @@ export class UpdateBookingDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   creditAmount?: number;
 
   @ApiPropertyOptional({ example: 20, description: 'Discount applied' })
@@ -68,5 +72,6 @@ export class UpdateBookingDto {
   @Min(0)
   @IsOptional()
   @Type(() => Number)
+  @ToRupees()
   discount?: number;
 }

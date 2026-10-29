@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../config/database.config';
 import { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
@@ -138,7 +139,7 @@ export class MembershipsService {
         hoursRemaining: plan.hours,
         hoursUsed: 0,
         status: 'active',
-        paymentAmount: purchaseDto.paymentAmount || plan.price,
+        paymentAmount: purchaseDto.paymentAmount ?? plan.price, // `||` turned a ₹0 complimentary plan into full price
         paymentMode: purchaseDto.paymentMode || 'cash',
         notes: purchaseDto.notes,
         createdBy: purchaseDto.createdBy,
@@ -203,9 +204,51 @@ export class MembershipsService {
       throw new BadRequestException('Membership is not active');
     }
 
-    const newHoursRemaining = Math.max(0, membership.hoursRemaining - hours);
-    const newHoursUsed = membership.hoursUsed + hours;
-    const newStatus = newHoursRemaining === 0 ? 'exhausted' : membership.status;
+    if (membership.hoursRemaining < hours - 1e-9) {
+      throw new BadRequestException(
+        `Not enough hours in membership. Need: ${hours.toFixed(2)} hrs, Available: ${membership.hoursRemaining.toFixed(2)} hrs`,
+      );
+    }
+
+    // Atomic decrement guarded on the balance, so two sessions starting at once
+    // can't both read the same balance and lose a deduction
+    const result = await this.prisma.customerMembership.updateMany({
+      where: { id: membershipId, status: 'active', hoursRemaining: { gte: hours - 1e-9 } },
+      data: {
+        hoursRemaining: { decrement: hours },
+        hoursUsed: { increment: hours },
+      },
+    });
+    if (result.count === 0) {
+      throw new BadRequestException('Not enough hours left in membership');
+    }
+
+    const updated = await this.prisma.customerMembership.findUniqueOrThrow({ where: { id: membershipId } });
+    if (updated.hoursRemaining <= 1e-9) {
+      return this.prisma.customerMembership.update({
+        where: { id: membershipId },
+        data: { hoursRemaining: 0, status: 'exhausted' },
+      });
+    }
+    return updated;
+  }
+
+  // Give back hours when a membership session is deleted or shortened
+  async refundHours(membershipId: string, hours: number) {
+    if (hours <= 0) return null;
+
+    const membership = await this.prisma.customerMembership.findUnique({
+      where: { id: membershipId },
+    });
+    if (!membership) return null;
+
+    const newHoursRemaining = Math.min(membership.hoursTotal, membership.hoursRemaining + hours);
+    const newHoursUsed = Math.max(0, membership.hoursUsed - hours);
+    // An exhausted membership becomes usable again if it has not expired
+    const newStatus =
+      membership.status === 'exhausted' && newHoursRemaining > 0 && membership.expiryDate > new Date()
+        ? 'active'
+        : membership.status;
 
     return this.prisma.customerMembership.update({
       where: { id: membershipId },
@@ -236,7 +279,8 @@ export class MembershipsService {
     });
   }
 
-  // Cron job to update expired memberships
+  // Previously never scheduled, so expired memberships stayed "active" forever
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async updateExpiredMemberships() {
     const now = new Date();
 
