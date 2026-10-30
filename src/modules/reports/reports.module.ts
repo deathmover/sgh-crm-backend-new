@@ -24,6 +24,14 @@ export class ReportsController {
   profitLoss(@Query('year') year: string, @Query('month') month: string) {
     return this.reportsService.profitLoss(Number(year), Number(month));
   }
+
+  @Get('snacks')
+  @ApiOperation({ summary: 'Snacks & drinks analytics for a date range (defaults to this month)' })
+  @ApiQuery({ name: 'startDate', required: false, example: '2026-10-01' })
+  @ApiQuery({ name: 'endDate', required: false, example: '2026-10-31' })
+  snacks(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.reportsService.snacks(startDate, endDate);
+  }
 }
 
 @Module({

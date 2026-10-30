@@ -27,7 +27,7 @@ export class ProductsService {
       }),
       this.prisma.entryItem.groupBy({
         by: ['productId'],
-        where: { createdAt: dayRange(), productId: { not: null }, entry: { isDeleted: false } },
+        where: { productId: { not: null }, entry: { isDeleted: false, startTime: dayRange() } },
         _sum: { quantity: true },
       }),
     ]);

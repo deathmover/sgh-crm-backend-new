@@ -52,9 +52,11 @@ export class ReportsService {
         orderBy: { date: 'asc' },
         select: { date: true, category: true, description: true, paymentMode: true, amount: true },
       }),
+      // Snacks are part of the session bill, so they count on the day the session
+      // started (like its money). createdAt moves whenever the bill is edited.
       this.prisma.entryItem.findMany({
-        where: { createdAt: range, entry: { isDeleted: false } },
-        select: { name: true, quantity: true, total: true, unitCost: true, createdAt: true },
+        where: { entry: { isDeleted: false, startTime: range } },
+        select: { name: true, quantity: true, total: true, unitCost: true, entry: { select: { startTime: true } } },
       }),
     ]);
     return { entries, creditPayments, memberships, expenses, items };
@@ -197,7 +199,7 @@ export class ReportsService {
     for (const p of creditPayments) day(p.createdAt).creditCollected += p.totalAmount;
     for (const m of memberships) day(m.purchaseDate).membershipSales += m.paymentAmount;
     for (const x of expenses) day(x.date).expenses += x.amount;
-    for (const i of items) day(i.createdAt).snackSales += i.total;
+    for (const i of items) day(i.entry.startTime).snackSales += i.total;
 
     const daily = [...days.values()].map((r) => {
       const income = r.sessionCash + r.sessionOnline + r.creditCollected + r.membershipSales;
@@ -248,5 +250,231 @@ export class ReportsService {
       machines: this.summarizeMachines(entries),
     };
   }
-}
 
+  /**
+   * Snacks & drinks analytics for a date range (inclusive, local days), dated by
+   * session start like every other money figure. Compares with the same-length
+   * period just before it.
+   */
+  async snacks(startDate?: string, endDate?: string) {
+    const today = toLocalDateKey(new Date());
+    const startKey = startDate || today.slice(0, 8) + '01';
+    const endKey = endDate || today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startKey) || !/^\d{4}-\d{2}-\d{2}$/.test(endKey) || startKey > endKey) {
+      throw new BadRequestException('startDate and endDate must be YYYY-MM-DD with startDate <= endDate');
+    }
+    const range = dateRange(startKey, endKey);
+    const dayMs = 24 * 60 * 60 * 1000;
+    const days = Math.round((range.lte.getTime() - range.gte.getTime()) / dayMs);
+    if (days > 400) throw new BadRequestException('Pick a range of at most 400 days');
+    const prevRange = { gte: new Date(range.gte.getTime() - days * dayMs), lte: new Date(range.gte.getTime() - 1) };
+
+    const itemSelect = {
+      productId: true,
+      name: true,
+      quantity: true,
+      total: true,
+      unitCost: true,
+      entryId: true,
+      product: { select: { category: true } },
+      entry: { select: { startTime: true, machine: { select: { name: true } } } },
+    } as const;
+
+    const [items, prevItems, entries, prevEntryCount, products, losses, restocks] = await Promise.all([
+      this.prisma.entryItem.findMany({ where: { entry: { isDeleted: false, startTime: range } }, select: itemSelect }),
+      this.prisma.entryItem.findMany({
+        where: { entry: { isDeleted: false, startTime: prevRange } },
+        select: { quantity: true, total: true, unitCost: true, entryId: true },
+      }),
+      this.prisma.entry.findMany({
+        where: { isDeleted: false, startTime: range },
+        select: { id: true, finalAmount: true, machine: { select: { name: true } } },
+      }),
+      this.prisma.entry.count({ where: { isDeleted: false, startTime: prevRange } }),
+      this.prisma.product.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, category: true, stock: true, lowStockLevel: true, costPrice: true, price: true, createdAt: true },
+      }),
+      this.prisma.stockMovement.findMany({
+        where: { reason: 'adjust', change: { lt: 0 }, createdAt: range },
+        select: { change: true, product: { select: { name: true, costPrice: true } } },
+      }),
+      this.prisma.stockMovement.findMany({
+        where: { reason: 'restock', change: { gt: 0 }, createdAt: range },
+        select: { change: true, product: { select: { costPrice: true } } },
+      }),
+    ]);
+
+    const totals = (rows: { quantity: number; total: number; unitCost: number | null; entryId: string }[], sessionCount: number) => {
+      const revenue = rows.reduce((a, i) => a + i.total, 0);
+      const cost = rows.reduce((a, i) => a + (i.unitCost ?? 0) * i.quantity, 0);
+      const snackSessions = new Set(rows.map((i) => i.entryId)).size;
+      return {
+        revenue,
+        cost,
+        // Same rule as the day summary and P&L: an unknown cost counts as 0, and
+        // uncostedRevenue tells the UI how much of the profit that might overstate
+        profit: revenue - cost,
+        margin: revenue > 0 ? round2(((revenue - cost) / revenue) * 100) : null,
+        uncostedRevenue: rows.filter((i) => i.unitCost == null).reduce((a, i) => a + i.total, 0),
+        itemsSold: rows.reduce((a, i) => a + i.quantity, 0),
+        sessions: sessionCount,
+        snackSessions,
+        attachRate: sessionCount > 0 ? round2((snackSessions / sessionCount) * 100) : 0,
+        avgPerSnackSession: snackSessions > 0 ? round2(revenue / snackSessions) : 0,
+      };
+    };
+    const summary = totals(items, entries.length);
+    const previous = totals(prevItems, prevEntryCount);
+    const sessionRevenue = entries.reduce((a, e) => a + e.finalAmount, 0);
+
+    // Day by day (every day in range, zero-filled)
+    const daily = new Map<string, { date: string; revenue: number; profit: number; quantity: number }>();
+    for (let t = range.gte.getTime(); t <= range.lte.getTime(); t += dayMs) {
+      const key = toLocalDateKey(new Date(t));
+      daily.set(key, { date: key, revenue: 0, profit: 0, quantity: 0 });
+    }
+    const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, quantity: 0, revenue: 0 }));
+    const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weekday = WEEKDAYS.map((day) => ({ day, quantity: 0, revenue: 0, days: 0 }));
+    for (const key of daily.keys()) weekday[new Date(`${key}T12:00:00`).getDay()].days += 1;
+
+    type ItemRow = { productId: string | null; name: string; category: string; quantity: number; revenue: number; cost: number; costed: boolean };
+    const byItem = new Map<string, ItemRow>();
+    const byCategory = new Map<string, { category: string; quantity: number; revenue: number }>();
+    const machineSnacks = new Map<string, { revenue: number; sessions: Set<string> }>();
+
+    for (const i of items) {
+      const start = i.entry.startTime;
+      const lineCost = i.unitCost != null ? i.unitCost * i.quantity : 0;
+      const d = daily.get(toLocalDateKey(start));
+      if (d) {
+        d.revenue += i.total;
+        d.quantity += i.quantity;
+        d.profit += i.total - lineCost;
+      }
+      hourly[start.getHours()].quantity += i.quantity;
+      hourly[start.getHours()].revenue += i.total;
+      weekday[start.getDay()].quantity += i.quantity;
+      weekday[start.getDay()].revenue += i.total;
+
+      const category = i.product?.category ?? 'other';
+      const key = i.productId ?? `other:${i.name}`;
+      const row = byItem.get(key) ?? { productId: i.productId, name: i.name, category, quantity: 0, revenue: 0, cost: 0, costed: true };
+      row.quantity += i.quantity;
+      row.revenue += i.total;
+      row.cost += lineCost;
+      if (i.unitCost == null) row.costed = false;
+      byItem.set(key, row);
+
+      const c = byCategory.get(category) ?? { category, quantity: 0, revenue: 0 };
+      c.quantity += i.quantity;
+      c.revenue += i.total;
+      byCategory.set(category, c);
+
+      const m = machineSnacks.get(i.entry.machine.name) ?? { revenue: 0, sessions: new Set<string>() };
+      m.revenue += i.total;
+      m.sessions.add(i.entryId);
+      machineSnacks.set(i.entry.machine.name, m);
+    }
+
+    const sessionsPerMachine = new Map<string, number>();
+    for (const e of entries) sessionsPerMachine.set(e.machine.name, (sessionsPerMachine.get(e.machine.name) || 0) + 1);
+    const machines = [...sessionsPerMachine.entries()]
+      .map(([name, sessions]) => {
+        const m = machineSnacks.get(name);
+        const snackSessions = m?.sessions.size ?? 0;
+        return {
+          name,
+          sessions,
+          snackSessions,
+          attachRate: sessions ? round2((snackSessions / sessions) * 100) : 0,
+          revenue: m?.revenue ?? 0,
+          perSession: sessions ? round2((m?.revenue ?? 0) / sessions) : 0,
+        };
+      })
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // Stock cover uses the average daily sales over the selected range
+    const soldByProduct = new Map<string, number>();
+    for (const r of byItem.values()) if (r.productId) soldByProduct.set(r.productId, r.quantity);
+    const itemRows = [...byItem.values()]
+      .map((r) => {
+        const product = r.productId ? products.find((p) => p.id === r.productId) : undefined;
+        const perDay = r.quantity / days;
+        return {
+          productId: r.productId,
+          name: r.name,
+          category: r.category,
+          quantity: r.quantity,
+          revenue: r.revenue,
+          cost: r.costed ? r.cost : null,
+          profit: r.costed ? r.revenue - r.cost : null,
+          margin: r.costed && r.revenue > 0 ? round2(((r.revenue - r.cost) / r.revenue) * 100) : null,
+          share: summary.revenue > 0 ? round2((r.revenue / summary.revenue) * 100) : 0,
+          stock: product?.stock ?? null,
+          daysOfStock: product && perDay > 0 ? round2(Math.max(product.stock, 0) / perDay) : null,
+        };
+      })
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const runningOut = products
+      .map((p) => {
+        const perDay = (soldByProduct.get(p.id) || 0) / days;
+        return { name: p.name, stock: p.stock, perDay: round2(perDay), daysLeft: perDay > 0 ? round2(Math.max(p.stock, 0) / perDay) : null };
+      })
+      .filter((p) => p.daysLeft != null && p.daysLeft <= 7)
+      .sort((a, b) => (a.daysLeft ?? 0) - (b.daysLeft ?? 0));
+
+    // On the menu (and around for the whole range) but nothing sold
+    const notSelling = products
+      .filter((p) => !soldByProduct.has(p.id) && p.createdAt <= range.gte)
+      .map((p) => ({ name: p.name, stock: p.stock, stockValue: p.stock > 0 ? p.stock * (p.costPrice ?? 0) : 0 }))
+      .sort((a, b) => b.stockValue - a.stockValue);
+
+    const lossQty = losses.reduce((a, l) => a - l.change, 0);
+    const lossValue = losses.reduce((a, l) => a - l.change * (l.product.costPrice ?? 0), 0);
+    const lossByItem = new Map<string, number>();
+    for (const l of losses) lossByItem.set(l.product.name, (lossByItem.get(l.product.name) || 0) - l.change);
+
+    return {
+      period: { startDate: startKey, endDate: endKey, days },
+      summary: { ...summary, shareOfSessionRevenue: sessionRevenue > 0 ? round2((summary.revenue / sessionRevenue) * 100) : 0 },
+      previous: {
+        startDate: toLocalDateKey(prevRange.gte),
+        endDate: toLocalDateKey(prevRange.lte),
+        revenue: previous.revenue,
+        profit: previous.profit,
+        itemsSold: previous.itemsSold,
+        attachRate: previous.attachRate,
+        avgPerSnackSession: previous.avgPerSnackSession,
+      },
+      daily: [...daily.values()],
+      hourly,
+      weekday: [...weekday.slice(1), weekday[0]].map((w) => ({
+        day: w.day,
+        quantity: w.quantity,
+        revenue: w.revenue,
+        avgRevenue: w.days ? round2(w.revenue / w.days) : 0,
+      })),
+      categories: [...byCategory.values()]
+        .map((c) => ({ ...c, share: summary.revenue > 0 ? round2((c.revenue / summary.revenue) * 100) : 0 }))
+        .sort((a, b) => b.revenue - a.revenue),
+      items: itemRows,
+      machines,
+      stock: {
+        runningOut,
+        notSelling,
+        losses: {
+          quantity: lossQty,
+          value: lossValue,
+          items: [...lossByItem.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity),
+        },
+        restocked: {
+          quantity: restocks.reduce((a, r) => a + r.change, 0),
+          value: restocks.reduce((a, r) => a + r.change * (r.product.costPrice ?? 0), 0),
+        },
+      },
+    };
+  }
+}

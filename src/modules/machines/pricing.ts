@@ -33,17 +33,19 @@ export function costFromRates(minutes: number, rates: RateCard): number {
     return fullHours * hourlyRate + (rest === 30 ? halfHourlyRate : rest > 0 ? hourlyRate : 0);
   };
 
-  // Use the largest package that fits (only one), then time-based for the rest.
+  // Cheapest of: plain time-based, or one package that fits plus time-based for
+  // the rest. Picking the largest package overcharged when a smaller one plus
+  // extra hours cost less (3h ₹180 + 1h ₹70 = ₹250 beats a 4h ₹280 package).
   // Keys are parsed leniently: the settings screen used to store "2 hours",
   // which Number() turned into NaN so those packages never applied.
   const packages = Object.entries(rates.packageRates ?? {})
     .map(([key, price]) => ({ hours: parseFloat(key), price: Number(price) }))
-    .filter((p) => p.hours > 0 && Number.isFinite(p.price))
-    .sort((a, b) => b.hours - a.hours);
-  const pkg = packages.find((p) => minutes / 60 >= p.hours);
-  if (pkg) return pkg.price + timeCost(minutes - pkg.hours * 60);
+    .filter((p) => p.hours > 0 && Number.isFinite(p.price) && minutes >= p.hours * 60);
 
-  return timeCost(minutes);
+  return packages.reduce(
+    (best, p) => Math.min(best, p.price + timeCost(minutes - p.hours * 60)),
+    timeCost(minutes)
+  );
 }
 
 export function controllerCount(pcNumber?: string | null): number {
