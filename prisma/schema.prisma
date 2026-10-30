@@ -95,6 +95,7 @@ model Entry {
   membership         CustomerMembership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
   membershipHours    Float?              // Hours deducted from membership (if used)
   booking            Booking?            // Booking that created this entry (if any)
+  items              EntryItem[]         // Snacks/drinks sold during the session
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -365,4 +366,58 @@ model PartnerLoan {
   @@index([partnerName])
   @@index([date])
   @@map("partner_loans")
+}
+
+// ─── Snacks & drinks ─────────────────────────────────────────────
+
+model Product {
+  id            String          @id @default(cuid())
+  name          String
+  category      String          @default("drinks") // drinks | snacks | food | other
+  price         Int             // Selling price (₹)
+  costPrice     Int?            // Purchase cost (₹), for snack profit in reports
+  stock         Int             @default(0) // Can go negative if sold before restock is recorded
+  lowStockLevel Int             @default(5) // Warn at or below this
+  isActive      Boolean         @default(true) // false = deleted (kept for history)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  items         EntryItem[]
+  movements     StockMovement[]
+
+  @@index([isActive])
+  @@map("products")
+}
+
+model EntryItem {
+  id        String   @id @default(cuid())
+  entry     Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entryId   String
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId String?  // null = "Other" amount not from the menu
+  name      String   // Snapshot so history survives renames/deletes
+  unitPrice Int
+  unitCost  Int?     // Snapshot of cost price for profit reports
+  quantity  Int
+  total     Int
+  createdAt DateTime @default(now())
+
+  @@index([entryId])
+  @@index([productId])
+  @@index([createdAt])
+  @@map("entry_items")
+}
+
+model StockMovement {
+  id        String   @id @default(cuid())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  change    Int      // + restock / return, - sale
+  reason    String   // restock | sale | return | adjust
+  entryId   String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@index([createdAt])
+  @@map("stock_movements")
 }

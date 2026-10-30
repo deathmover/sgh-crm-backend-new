@@ -10,6 +10,8 @@ import { Parser } from 'json2csv';
 import { PrismaService } from '../../config/database.config';
 import { MachinesService } from '../machines/machines.service';
 import { MembershipsService } from '../memberships/memberships.service';
+import { ProductsService, type ItemLine } from '../products/products.service';
+import { EntryItemInputDto } from '../products/dto/product.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { EndEntryDto } from './dto/end-entry.dto';
 import { EntryQueryDto } from './dto/entry-query.dto';
@@ -25,13 +27,20 @@ export class EntriesService {
   constructor(
     private prisma: PrismaService,
     private machinesService: MachinesService,
+    private productsService: ProductsService,
     @Inject(forwardRef(() => MembershipsService))
     private membershipsService: MembershipsService,
   ) {}
 
   async create(createEntryDto: CreateEntryDto) {
-    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, beveragesAmount, notes, useMembershipId, finalAmount: finalAmountOverride } =
+    const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, notes, useMembershipId, finalAmount: finalAmountOverride, items } =
       createEntryDto;
+
+    // Menu items, when given, decide the snacks amount
+    const itemLines = items?.length ? await this.productsService.buildLines(this.prisma, items) : [];
+    const beveragesAmount = itemLines.length
+      ? itemLines.reduce((sum, l) => sum + l.total, 0)
+      : createEntryDto.beveragesAmount;
 
     // Verify customer exists
     const customer = await this.prisma.customer.findUnique({
@@ -131,9 +140,9 @@ export class EntriesService {
       paymentStatus = 'partial'; // Advance payment means partial until session ends
     }
 
-    // If using membership, set payment as paid (no money charged)
-    if (membershipId) {
-      paymentStatus = 'paid'; // Membership sessions are considered paid
+    // Membership sessions are paid, unless snacks were ordered
+    if (membershipId && !(itemLines.length ? itemLines.reduce((s, l) => s + l.total, 0) : beveragesAmount)) {
+      paymentStatus = 'paid';
     }
 
     // Calculate estimated cost if predefined duration is provided
@@ -189,7 +198,8 @@ export class EntriesService {
         cost: estimatedCost || undefined,
         discount: discount || 0,
         beveragesAmount: beveragesAmount || 0,
-        finalAmount: membershipId ? 0 : estimatedFinalAmount, // ₹0 if using membership
+        // Membership covers play time only; snacks are still charged
+        finalAmount: membershipId ? beveragesAmount || 0 : estimatedFinalAmount,
         paymentType: 'cash', // Default, will be updated on end
         cashAmount: cash,
         onlineAmount: online,
@@ -222,6 +232,13 @@ export class EntriesService {
         },
       },
     });
+
+    if (itemLines.length) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.entryItem.createMany({ data: itemLines.map((l) => ({ ...l, entryId: created.id })) });
+        await this.productsService.applyStockDiff(tx, created.id, [], itemLines);
+      });
+    }
 
     // Deduct hours only once the entry exists, so a failed create can't eat them
     if (membershipId && membershipHours) {
@@ -436,6 +453,10 @@ export class EntriesService {
       include: {
         customer: true,
         machine: true,
+        items: {
+          select: { id: true, productId: true, name: true, unitPrice: true, quantity: true, total: true },
+          orderBy: { createdAt: 'asc' },
+        },
         membership: {
           select: {
             id: true,
@@ -461,6 +482,11 @@ export class EntriesService {
     return this.prisma.entry.findMany({
       where: { endTime: null, isDeleted: false },
       include: {
+        items: {
+          select: { id: true, productId: true, name: true, unitPrice: true, quantity: true, total: true },
+          orderBy: { createdAt: 'asc' },
+        },
+
         customer: {
           select: { id: true, name: true, phone: true },
         },
@@ -503,6 +529,11 @@ export class EntriesService {
     const entries = await this.prisma.entry.findMany({
       where: dateFilter,
       include: {
+        items: {
+          select: { id: true, productId: true, name: true, unitPrice: true, quantity: true, total: true },
+          orderBy: { createdAt: 'asc' },
+        },
+
         customer: {
           select: { id: true, name: true, phone: true, pendingCredit: true },
         },
@@ -676,6 +707,11 @@ export class EntriesService {
   async update(id: string, updateData: any) {
     const entry = await this.findOne(id);
 
+    // When the bill has menu items, the snacks amount comes from them (PUT /items)
+    if (updateData.beveragesAmount !== undefined && (entry as any).items?.length) {
+      delete updateData.beveragesAmount;
+    }
+
     // Prepare the data to update
     const dataToUpdate = { ...updateData };
 
@@ -802,6 +838,46 @@ export class EntriesService {
     });
   }
 
+  /**
+   * Replace the snacks/drinks on a session. Stock moves by the difference,
+   * the snacks amount is recalculated and the bill follows it.
+   */
+  async setItems(id: string, inputs: EntryItemInputDto[]) {
+    const entry = await this.prisma.entry.findUnique({ where: { id }, include: { items: true } });
+    if (!entry) throw new NotFoundException('Entry not found');
+    if (entry.isDeleted) throw new BadRequestException('Entry is deleted');
+
+    await this.prisma.$transaction(async (tx) => {
+      const before: ItemLine[] = entry.items.map((i) => ({
+        productId: i.productId, name: i.name, unitPrice: i.unitPrice, unitCost: i.unitCost, quantity: i.quantity, total: i.total,
+      }));
+      const after = await this.productsService.buildLines(tx, inputs, before);
+      await this.productsService.applyStockDiff(tx, id, before, after);
+      await tx.entryItem.deleteMany({ where: { entryId: id } });
+      if (after.length) await tx.entryItem.createMany({ data: after.map((l) => ({ ...l, entryId: id })) });
+
+      const newBeverages = after.reduce((sum, l) => sum + l.total, 0);
+      const delta = newBeverages - (entry.beveragesAmount || 0);
+      let finalAmount = entry.finalAmount;
+      if (entry.membershipId) finalAmount = newBeverages; // play is covered by hours
+      else if (entry.finalAmount > 0) finalAmount = Math.max(0, entry.finalAmount + delta);
+      else if (entry.endTime) finalAmount = newBeverages;
+      // Open-ended running sessions keep 0; ending adds the snacks amount
+
+      const totalPaid = entry.cashAmount + entry.onlineAmount + entry.creditAmount + (entry.creditPaid || 0);
+      await tx.entry.update({
+        where: { id },
+        data: {
+          beveragesAmount: newBeverages,
+          finalAmount,
+          ...((entry.endTime || entry.membershipId) && { paymentStatus: paymentStatusFor(totalPaid, finalAmount) }),
+        },
+      });
+    });
+
+    return this.findOne(id);
+  }
+
   async softDelete(id: string) {
     const entry = await this.findOne(id);
 
@@ -811,6 +887,8 @@ export class EntriesService {
     if (!entry.isDeleted && entry.membershipId && entry.membershipHours) {
       await this.membershipsService.refundHours(entry.membershipId, entry.membershipHours);
     }
+    // Snacks go back on the shelf
+    if (!entry.isDeleted) await this.productsService.moveEntryStock(id, 'return');
 
     return this.prisma.entry.update({
       where: { id },
@@ -891,10 +969,11 @@ export class EntriesService {
 
     // Note: pendingCredit is calculated dynamically from entries, no need to update customer table
 
-    // Re-take the hours refunded on soft delete
+    // Re-take the hours and stock returned on soft delete
     if (entry.membershipId && entry.membershipHours) {
       await this.membershipsService.deductHours(entry.membershipId, entry.membershipHours);
     }
+    await this.productsService.moveEntryStock(id, 'sale');
 
     return this.prisma.entry.update({
       where: { id },
@@ -914,6 +993,7 @@ export class EntriesService {
     if (!entry.isDeleted && entry.membershipId && entry.membershipHours) {
       await this.membershipsService.refundHours(entry.membershipId, entry.membershipHours);
     }
+    if (!entry.isDeleted) await this.productsService.moveEntryStock(id, 'return');
 
     return this.prisma.entry.delete({
       where: { id },

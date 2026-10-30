@@ -16,6 +16,9 @@ import { BookingsModule } from './modules/bookings/bookings.module';
 import { DailyBalancesModule } from './modules/daily-balances/daily-balances.module';
 import { PartnerProfitsModule } from './modules/partner-profits/partner-profits.module';
 import { PartnerLoansModule } from './modules/partner-loans/partner-loans.module';
+import { ProductsModule } from './modules/products/products.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -38,6 +41,9 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     DailyBalancesModule,
     PartnerProfitsModule,
     PartnerLoansModule,
+    ProductsModule,
+    SettingsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [

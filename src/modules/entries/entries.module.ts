@@ -4,9 +4,10 @@ import { EntriesController } from './entries.controller';
 import { PrismaService } from '../../config/database.config';
 import { MachinesModule } from '../machines/machines.module';
 import { MembershipsModule } from '../memberships/memberships.module';
+import { ProductsModule } from '../products/products.module';
 
 @Module({
-  imports: [MachinesModule, forwardRef(() => MembershipsModule)],
+  imports: [MachinesModule, ProductsModule, forwardRef(() => MembershipsModule)],
   controllers: [EntriesController],
   providers: [EntriesService, PrismaService],
   exports: [EntriesService],

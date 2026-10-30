@@ -9,10 +9,12 @@ import {
   Query,
   Res,
   Header,
+  Put,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { EntriesService } from './entries.service';
+import { SetEntryItemsDto } from '../products/dto/product.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { UpdateEntryDto } from './dto/update-entry.dto';
 import { EndEntryDto } from './dto/end-entry.dto';
@@ -89,6 +91,12 @@ export class EntriesController {
   @ApiOperation({ summary: 'Restore a soft-deleted entry' })
   restore(@Param('id') id: string) {
     return this.entriesService.restore(id);
+  }
+
+  @Put(':id/items')
+  @ApiOperation({ summary: 'Replace the snacks/drinks on a session (updates bill and stock)' })
+  setItems(@Param('id') id: string, @Body() dto: SetEntryItemsDto) {
+    return this.entriesService.setItems(id, dto.items);
   }
 
   @Delete(':id/soft')

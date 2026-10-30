@@ -9,6 +9,8 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ArrayMaxSize, IsArray, ValidateNested } from 'class-validator';
+import { EntryItemInputDto } from '../../products/dto/product.dto';
 import { ToRupees } from '../../../common/decorators/to-rupees.decorator';
 
 export class CreateEntryDto {
@@ -91,6 +93,14 @@ export class CreateEntryDto {
   @Type(() => Number)
   @ToRupees()
   finalAmount?: number;
+
+  @ApiPropertyOptional({ type: [EntryItemInputDto], description: 'Snacks/drinks; their total becomes beveragesAmount' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => EntryItemInputDto)
+  items?: EntryItemInputDto[];
 
   @ApiPropertyOptional({ example: 'clxxx...membership-id', description: 'Use hours from this membership (optional)' })
   @IsString()
