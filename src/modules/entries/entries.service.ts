@@ -650,6 +650,10 @@ export class EntriesService {
     const cashRevenue = sessionCash + other.cash;
     const onlineRevenue = sessionOnline + other.online;
     const totalRevenue = cashRevenue + onlineRevenue;
+    // The day's business: every bill raised today (paid, unpaid or on credit) plus
+    // memberships sold. Credit settled for older sessions is not new business.
+    const billedAmount = enrichedEntries.reduce((sum, e) => sum + (e.finalAmount || 0), 0);
+    const membershipSold = other.membershipCash + other.membershipOnline;
 
     // Fix: Fill in missing duration if start and end times exist
     const processedEntries = enrichedEntries.map((entry) => {
@@ -667,6 +671,8 @@ export class EntriesService {
       entries: processedEntries,
       summary: {
         totalRevenue,
+        dayBusiness: billedAmount + membershipSold,
+        billedAmount,
         cashRevenue,
         onlineRevenue,
         creditRevenue,
@@ -678,7 +684,7 @@ export class EntriesService {
         creditCollected: other.creditCash + other.creditOnline,
         creditCollectedCash: other.creditCash,
         creditCollectedOnline: other.creditOnline,
-        membershipSales: other.membershipCash + other.membershipOnline,
+        membershipSales: membershipSold,
         membershipCash: other.membershipCash,
         membershipOnline: other.membershipOnline,
       },
