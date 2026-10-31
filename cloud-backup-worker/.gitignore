@@ -1,0 +1,4 @@
+# Decrypted support downloads and wrangler state
+*.sqlite
+.wrangler/
+node_modules/

@@ -19,6 +19,7 @@ import { PartnerLoansModule } from './modules/partner-loans/partner-loans.module
 import { ProductsModule } from './modules/products/products.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { BackupsModule } from './modules/backups/backups.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -44,6 +45,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     ProductsModule,
     SettingsModule,
     ReportsModule,
+    BackupsModule,
   ],
   controllers: [AppController],
   providers: [

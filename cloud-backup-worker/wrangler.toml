@@ -1,0 +1,14 @@
+name = "sgh-cloud-backup"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "sgh-backups"
+
+# Secrets (set with `npx wrangler secret put <NAME>`, never written here):
+#   SIGNING_SECRET  random string that signs café keys — keep it safe, it also decrypts backups
+#   ADMIN_TOKEN     your developer token for /v1/admin/*
+# Optional plain variable to block a café's key:
+# [vars]
+# REVOKED_CAFES = "old-cafe-id,another-id"

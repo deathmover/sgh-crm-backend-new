@@ -91,6 +91,7 @@ model Entry {
   isDeleted          Boolean             @default(false) // Soft delete flag
   deletedAt          DateTime?           // When it was deleted
   autoEnded          Boolean             @default(false) // True if session was auto-ended
+  billedBy           String?             // Login that last set the bill (start, end or edit)
   membershipId       String?             // Reference to membership used (if any)
   membership         CustomerMembership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
   membershipHours    Float?              // Hours deducted from membership (if used)

@@ -1,0 +1,10 @@
+{
+  "name": "sgh-cloud-backup",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "npx wrangler@3 deploy",
+    "cafe-key": "node tools/cafe-key.mjs",
+    "fetch": "node tools/fetch-backup.mjs"
+  }
+}

@@ -3,8 +3,13 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import { applyPendingRestore, databasePath } from './modules/backups/backup-files';
 
 async function bootstrap() {
+  // A restore chosen in Settings swaps the file before anything opens it
+  // (the desktop app does this itself before migrating, so this is for other setups)
+  applyPendingRestore(databasePath(), undefined, (msg) => new Logger('Backups').warn(msg));
+
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });

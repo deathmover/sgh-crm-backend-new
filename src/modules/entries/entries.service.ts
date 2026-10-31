@@ -32,7 +32,7 @@ export class EntriesService {
     private membershipsService: MembershipsService,
   ) {}
 
-  async create(createEntryDto: CreateEntryDto) {
+  async create(createEntryDto: CreateEntryDto, billedBy?: string) {
     const { customerId, machineId, startTime, predefinedDuration, cashAmount, onlineAmount, creditAmount, pcNumber, discount, notes, useMembershipId, finalAmount: finalAmountOverride, items } =
       createEntryDto;
 
@@ -197,6 +197,7 @@ export class EntriesService {
         roundedDuration,
         cost: estimatedCost || undefined,
         discount: discount || 0,
+        billedBy,
         beveragesAmount: beveragesAmount || 0,
         // Membership covers play time only; snacks are still charged
         finalAmount: membershipId ? beveragesAmount || 0 : estimatedFinalAmount,
@@ -253,7 +254,7 @@ export class EntriesService {
     return created;
   }
 
-  async endEntry(id: string, endEntryDto: EndEntryDto, autoEnded = false) {
+  async endEntry(id: string, endEntryDto: EndEntryDto, autoEnded = false, billedBy?: string) {
     const entry = await this.prisma.entry.findUnique({
       where: { id },
       include: { machine: true },
@@ -342,6 +343,7 @@ export class EntriesService {
         roundedDuration,
         cost: calculatedCost,
         finalAmount,
+        ...(billedBy && { billedBy }),
         paymentType: endEntryDto.paymentType,
         paymentStatus,
         cashAmount,
@@ -710,7 +712,7 @@ export class EntriesService {
     };
   }
 
-  async update(id: string, updateData: any) {
+  async update(id: string, updateData: any, billedBy?: string) {
     const entry = await this.findOne(id);
 
     // When the bill has menu items, the snacks amount comes from them (PUT /items)
@@ -820,6 +822,9 @@ export class EntriesService {
       const totalPaid = effectiveCash + effectiveOnline + effectiveCredit + (entry.creditPaid || 0);
       dataToUpdate.paymentStatus = paymentStatusFor(totalPaid, effectiveFinalAmount);
     }
+
+    // Whoever changes the bill amount owns any discount on it
+    if (billedBy && dataToUpdate.finalAmount !== undefined) dataToUpdate.billedBy = billedBy;
 
     // Allow updating ended entries (for PC number, beverages, notes, payment)
     return this.prisma.entry.update({

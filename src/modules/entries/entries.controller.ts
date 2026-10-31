@@ -20,6 +20,9 @@ import { UpdateEntryDto } from './dto/update-entry.dto';
 import { EndEntryDto } from './dto/end-entry.dto';
 import { EntryQueryDto } from './dto/entry-query.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+
+type AuthUser = { username?: string } | undefined;
 
 @ApiTags('Entries / Daily Sheet')
 @ApiBearerAuth()
@@ -29,8 +32,8 @@ export class EntriesController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new entry (start timer)' })
-  create(@Body() createEntryDto: CreateEntryDto) {
-    return this.entriesService.create(createEntryDto);
+  create(@Body() createEntryDto: CreateEntryDto, @CurrentUser() user: AuthUser) {
+    return this.entriesService.create(createEntryDto, user?.username);
   }
 
   @Get('export/csv')
@@ -68,8 +71,8 @@ export class EntriesController {
 
   @Patch(':id/end')
   @ApiOperation({ summary: 'End an entry (stop timer and calculate cost)' })
-  endEntry(@Param('id') id: string, @Body() endEntryDto: EndEntryDto) {
-    return this.entriesService.endEntry(id, endEntryDto);
+  endEntry(@Param('id') id: string, @Body() endEntryDto: EndEntryDto, @CurrentUser() user: AuthUser) {
+    return this.entriesService.endEntry(id, endEntryDto, false, user?.username);
   }
 
   @Patch(':id/payment')
@@ -113,8 +116,8 @@ export class EntriesController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update an entry' })
-  update(@Param('id') id: string, @Body() updateEntryDto: UpdateEntryDto) {
-    return this.entriesService.update(id, updateEntryDto);
+  update(@Param('id') id: string, @Body() updateEntryDto: UpdateEntryDto, @CurrentUser() user: AuthUser) {
+    return this.entriesService.update(id, updateEntryDto, user?.username);
   }
 
   @Delete(':id')

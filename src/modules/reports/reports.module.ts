@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
 import { PrismaService } from '../../config/database.config';
 import { SettingsModule } from '../settings/settings.module';
 import { ReportsService } from './reports.service';
+import { InsightsService } from './insights.service';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -34,9 +35,63 @@ export class ReportsController {
   }
 }
 
+const START_DATE = { name: 'startDate', required: false, example: '2026-10-01' };
+const END_DATE = { name: 'endDate', required: false, example: '2026-10-31' };
+
+@ApiTags('Insights')
+@ApiBearerAuth()
+@Controller('insights')
+export class InsightsController {
+  constructor(private readonly insights: InsightsService) {}
+
+  @Get('customers')
+  @ApiOperation({ summary: 'Regulars, lapsed customers, spend per visit, first-timer return rate' })
+  @ApiQuery(START_DATE)
+  @ApiQuery(END_DATE)
+  customers(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.insights.customers(startDate, endDate);
+  }
+
+  @Get('occupancy')
+  @ApiOperation({ summary: 'Minutes in use per machine by weekday and hour' })
+  @ApiQuery(START_DATE)
+  @ApiQuery(END_DATE)
+  occupancy(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.insights.occupancy(startDate, endDate);
+  }
+
+  @Get('pricing')
+  @ApiOperation({ summary: 'Hourly vs package vs membership sessions, packages sold, discounts by login' })
+  @ApiQuery(START_DATE)
+  @ApiQuery(END_DATE)
+  pricing(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.insights.pricing(startDate, endDate);
+  }
+
+  @Get('credit')
+  @ApiOperation({ summary: 'Outstanding credit by age, and credit given vs collected per month' })
+  credit() {
+    return this.insights.credit();
+  }
+
+  @Get('memberships')
+  @ApiOperation({ summary: 'Membership plans: hours bought vs played and value vs walk-in rates' })
+  @ApiQuery(START_DATE)
+  @ApiQuery(END_DATE)
+  memberships(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.insights.memberships(startDate, endDate);
+  }
+
+  @Get('target')
+  @ApiOperation({ summary: 'This month vs the monthly revenue target, with a forecast' })
+  target() {
+    return this.insights.target();
+  }
+}
+
 @Module({
   imports: [SettingsModule],
-  controllers: [ReportsController],
-  providers: [ReportsService, PrismaService],
+  controllers: [ReportsController, InsightsController],
+  providers: [ReportsService, InsightsService, PrismaService],
 })
 export class ReportsModule {}

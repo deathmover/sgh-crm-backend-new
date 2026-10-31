@@ -20,7 +20,19 @@ export interface PricedMachine extends RateCard {
 
 /** Price for a duration already rounded to 30-minute blocks, from one rate card. */
 export function costFromRates(minutes: number, rates: RateCard): number {
-  if (minutes <= 0) return 0;
+  return pricingBreakdown(minutes, rates).cost;
+}
+
+/**
+ * The bill for a duration and how it was reached: `packageHours` is the package
+ * used (null when plain hourly was cheapest) and `hourlyCost` what the same time
+ * costs without any package, so reports can show what packages save customers.
+ */
+export function pricingBreakdown(
+  minutes: number,
+  rates: RateCard
+): { cost: number; hourlyCost: number; packageHours: number | null } {
+  if (minutes <= 0) return { cost: 0, hourlyCost: 0, packageHours: null };
   const { hourlyRate, halfHourlyRate } = rates;
 
   const timeCost = (mins: number) => {
@@ -42,9 +54,13 @@ export function costFromRates(minutes: number, rates: RateCard): number {
     .map(([key, price]) => ({ hours: parseFloat(key), price: Number(price) }))
     .filter((p) => p.hours > 0 && Number.isFinite(p.price) && minutes >= p.hours * 60);
 
-  return packages.reduce(
-    (best, p) => Math.min(best, p.price + timeCost(minutes - p.hours * 60)),
-    timeCost(minutes)
+  const hourlyCost = timeCost(minutes);
+  return packages.reduce<{ cost: number; hourlyCost: number; packageHours: number | null }>(
+    (best, p) => {
+      const cost = p.price + timeCost(minutes - p.hours * 60);
+      return cost < best.cost ? { cost, hourlyCost, packageHours: p.hours } : best;
+    },
+    { cost: hourlyCost, hourlyCost, packageHours: null }
   );
 }
 
