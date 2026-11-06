@@ -3,9 +3,11 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PartnerProfitsService } from './partner-profits.service';
 import { CreatePartnerProfitDto } from './dto/create-partner-profit.dto';
 import { UpdatePartnerProfitDto } from './dto/update-partner-profit.dto';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Partner Profits')
 @ApiBearerAuth()
+@OwnerOnly()
 @Controller('partner-profits')
 export class PartnerProfitsController {
   constructor(private readonly service: PartnerProfitsService) {}

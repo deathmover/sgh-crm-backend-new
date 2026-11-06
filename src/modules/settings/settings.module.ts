@@ -2,6 +2,7 @@ import { Body, Controller, Get, Injectable, Module, Patch } from '@nestjs/common
 import { ApiBearerAuth, ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { PrismaService } from '../../config/database.config';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 // Café-level preferences stored in system_settings. Only these keys are exposed.
 const KEYS = {
@@ -78,6 +79,8 @@ export class SettingsController {
   get() {
     return this.settingsService.get();
   }
+
+  @OwnerOnly()
 
   @Patch()
   @ApiOperation({ summary: 'Update café settings' })

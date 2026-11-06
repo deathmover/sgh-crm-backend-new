@@ -22,6 +22,7 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { BulkImportCustomersDto } from './dto/bulk-import.dto';
 import { PayCreditDto } from './dto/pay-credit.dto';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Customers')
 @ApiBearerAuth()
@@ -35,11 +36,15 @@ export class CustomersController {
     return this.customersService.create(createCustomerDto);
   }
 
+  @OwnerOnly()
+
   @Post('bulk-import')
   @ApiOperation({ summary: 'Bulk import customers from Excel/CSV data' })
   bulkImport(@Body() bulkImportDto: BulkImportCustomersDto) {
     return this.customersService.bulkImport(bulkImportDto.customers);
   }
+
+  @OwnerOnly()
 
   @Post('import/file')
   @ApiOperation({ summary: 'Import customers from CSV or Excel file' })
@@ -99,6 +104,8 @@ export class CustomersController {
     res.send(buffer);
   }
 
+  @OwnerOnly()
+
   @Get('export/csv')
   @Header('Content-Type', 'text/csv')
   @Header('Content-Disposition', 'attachment; filename="customers.csv"')
@@ -149,6 +156,8 @@ export class CustomersController {
   ) {
     return this.customersService.update(id, updateCustomerDto);
   }
+
+  @OwnerOnly()
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a customer' })

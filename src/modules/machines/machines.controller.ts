@@ -2,6 +2,7 @@ import { Controller, Get, Param, Patch, Body, Post, Delete } from '@nestjs/commo
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { MachinesService } from './machines.service';
 import type { ControllerRates } from './pricing';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Machines')
 @ApiBearerAuth()
@@ -14,6 +15,8 @@ export class MachinesController {
   findAll() {
     return this.machinesService.findAll();
   }
+
+  @OwnerOnly()
 
   @Post()
   @ApiOperation({ summary: 'Create a new machine' })
@@ -30,6 +33,8 @@ export class MachinesController {
   ) {
     return this.machinesService.create(createData);
   }
+
+  @OwnerOnly()
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a machine (archived instead if it has history)' })
@@ -54,6 +59,8 @@ export class MachinesController {
   getStats(@Param('id') id: string) {
     return this.machinesService.getMachineStats(id);
   }
+
+  @OwnerOnly()
 
   @Patch(':id/rates')
   @ApiOperation({ summary: 'Update machine rates' })

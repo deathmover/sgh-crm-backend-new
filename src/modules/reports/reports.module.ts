@@ -4,6 +4,7 @@ import { PrismaService } from '../../config/database.config';
 import { SettingsModule } from '../settings/settings.module';
 import { ReportsService } from './reports.service';
 import { InsightsService } from './insights.service';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -18,6 +19,8 @@ export class ReportsController {
     return this.reportsService.dailySummary(date);
   }
 
+  @OwnerOnly()
+
   @Get('profit-loss')
   @ApiOperation({ summary: 'Monthly profit & loss with daily breakdown (for Excel export)' })
   @ApiQuery({ name: 'year', example: 2026 })
@@ -25,6 +28,8 @@ export class ReportsController {
   profitLoss(@Query('year') year: string, @Query('month') month: string) {
     return this.reportsService.profitLoss(Number(year), Number(month));
   }
+
+  @OwnerOnly()
 
   @Get('snacks')
   @ApiOperation({ summary: 'Snacks & drinks analytics for a date range (defaults to this month)' })
@@ -40,6 +45,7 @@ const END_DATE = { name: 'endDate', required: false, example: '2026-10-31' };
 
 @ApiTags('Insights')
 @ApiBearerAuth()
+@OwnerOnly()
 @Controller('insights')
 export class InsightsController {
   constructor(private readonly insights: InsightsService) {}

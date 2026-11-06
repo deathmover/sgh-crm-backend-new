@@ -3,9 +3,11 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { DailyBalancesService } from './daily-balances.service';
 import { CreateDailyBalanceDto } from './dto/create-daily-balance.dto';
 import { UpdateDailyBalanceDto } from './dto/update-daily-balance.dto';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Daily Balances')
 @ApiBearerAuth()
+@OwnerOnly()
 @Controller('daily-balances')
 export class DailyBalancesController {
   constructor(private readonly service: DailyBalancesService) {}

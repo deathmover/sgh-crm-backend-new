@@ -20,11 +20,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: any) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, username: true, role: true },
+      select: { id: true, username: true, role: true, isActive: true, mustChangePassword: true },
     });
 
-    if (!user) {
-      throw new UnauthorizedException('User not found');
+    // A login switched off in Settings stops working straight away, not when its token expires
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException(user ? 'This login has been switched off' : 'User not found');
     }
 
     return user;

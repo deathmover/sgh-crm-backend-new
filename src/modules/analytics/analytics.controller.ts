@@ -8,6 +8,7 @@ import {
 import { AnalyticsService } from './analytics.service';
 import { toLocalDateKey } from '../../common/utils/date-range';
 import { DateRangeQueryDto } from './dto/date-range-query.dto';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Analytics')
 @ApiBearerAuth()
@@ -70,6 +71,8 @@ export class AnalyticsController {
     );
   }
 
+  @OwnerOnly()
+
   @Get('revenue-report')
   @ApiOperation({ summary: 'Get comprehensive revenue report' })
   getRevenueReport(@Query() query: DateRangeQueryDto) {
@@ -126,6 +129,8 @@ export class AnalyticsController {
   ) {
     return this.analyticsService.getPcUtilization(date, startDate, endDate);
   }
+
+  @OwnerOnly()
 
   @Get('financial-analysis')
   @ApiOperation({ summary: 'Get comprehensive financial analysis (cash flow, profit/loss)' })

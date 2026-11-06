@@ -21,6 +21,7 @@ import { EndEntryDto } from './dto/end-entry.dto';
 import { EntryQueryDto } from './dto/entry-query.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 type AuthUser = { username?: string } | undefined;
 
@@ -63,6 +64,8 @@ export class EntriesController {
     return this.entriesService.getDailySheet(date);
   }
 
+  @OwnerOnly()
+
   @Get('deleted')
   @ApiOperation({ summary: 'Get all deleted entries' })
   getDeleted(@Query() query: EntryQueryDto) {
@@ -90,6 +93,8 @@ export class EntriesController {
     return this.entriesService.autoEndExpiredSessions();
   }
 
+  @OwnerOnly()
+
   @Post(':id/restore')
   @ApiOperation({ summary: 'Restore a soft-deleted entry' })
   restore(@Param('id') id: string) {
@@ -101,6 +106,8 @@ export class EntriesController {
   setItems(@Param('id') id: string, @Body() dto: SetEntryItemsDto) {
     return this.entriesService.setItems(id, dto.items);
   }
+
+  @OwnerOnly()
 
   @Delete(':id/soft')
   @ApiOperation({ summary: 'Soft delete an entry' })
@@ -119,6 +126,8 @@ export class EntriesController {
   update(@Param('id') id: string, @Body() updateEntryDto: UpdateEntryDto, @CurrentUser() user: AuthUser) {
     return this.entriesService.update(id, updateEntryDto, user?.username);
   }
+
+  @OwnerOnly()
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete an entry' })

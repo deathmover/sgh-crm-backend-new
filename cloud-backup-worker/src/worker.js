@@ -13,6 +13,9 @@
  *   GET  /v1/backups              list this café's backups
  *   PUT  /v1/backups/:file        upload one (then old ones are thinned out)
  *   GET  /v1/backups/:file        download one
+ * App updates (public, read-only; uploaded with `npm run publish-update` in sgh-crm-electron)
+ *   GET  /updates/latest.yml      newest version for the desktop app's auto-updater
+ *   GET  /updates/:file           installer / blockmap (supports Range requests)
  * Admin routes (Authorization: Bearer <ADMIN_TOKEN>)
  *   GET  /v1/admin/cafes                         cafés with backups
  *   GET  /v1/admin/cafes/:cafe/backups           list
@@ -97,6 +100,37 @@ async function prune(env, cafeId) {
   return doomed.length;
 }
 
+/** Serves an update file from R2 under updates/, with single-range support for partial downloads. */
+async function serveUpdate(request, env, file) {
+  const key = `updates/${file}`;
+  const head = await env.BACKUPS.head(key);
+  if (!head) return fail(404, 'Not found');
+  const headers = {
+    'content-type': file.endsWith('.yml') ? 'text/yaml; charset=utf-8' : 'application/octet-stream',
+    'accept-ranges': 'bytes',
+    etag: head.httpEtag,
+    // latest.yml must never be cached, or cafés won't see a new version
+    'cache-control': file.endsWith('.yml') ? 'no-cache' : 'public, max-age=31536000, immutable',
+  };
+  if (request.method === 'HEAD') return new Response(null, { headers: { ...headers, 'content-length': String(head.size) } });
+
+  const m = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+  if (m && (m[1] || m[2])) {
+    const start = m[1] ? Number(m[1]) : Math.max(0, head.size - Number(m[2]));
+    const end = m[1] && m[2] ? Math.min(Number(m[2]), head.size - 1) : head.size - 1;
+    if (start > end || start >= head.size) {
+      return new Response(null, { status: 416, headers: { ...headers, 'content-range': `bytes */${head.size}` } });
+    }
+    const obj = await env.BACKUPS.get(key, { range: { offset: start, length: end - start + 1 } });
+    return new Response(obj.body, {
+      status: 206,
+      headers: { ...headers, 'content-length': String(end - start + 1), 'content-range': `bytes ${start}-${end}/${head.size}` },
+    });
+  }
+  const obj = await env.BACKUPS.get(key);
+  return new Response(obj.body, { headers: { ...headers, 'content-length': String(head.size) } });
+}
+
 async function download(env, key) {
   const obj = await env.BACKUPS.get(key);
   if (!obj) return fail(404, 'Backup not found');
@@ -113,6 +147,11 @@ export default {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
 
     if (parts.length === 0) return json({ service: 'sgh-cloud-backup', ok: true });
+    if (parts[0] === 'updates') {
+      if (!['GET', 'HEAD'].includes(request.method)) return fail(405, 'Method not allowed');
+      if (parts.length !== 2 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])) return fail(404, 'Not found');
+      return serveUpdate(request, env, parts[1]);
+    }
     if (parts[0] !== 'v1') return fail(404, 'Not found');
 
     // ── Developer ──

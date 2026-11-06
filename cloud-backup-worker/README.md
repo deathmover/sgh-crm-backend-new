@@ -76,6 +76,27 @@ SQLite viewer, or run the CRM against it:
 cd ../ && DATABASE_URL="file:$PWD/cloud-backup-worker/shaukeens-hub-sgh-backup-….sqlite" npm run start:dev
 ```
 
+## App updates
+
+The same Worker serves desktop app updates publicly at `<worker>/updates/…`.
+Only you can publish, because uploads use your wrangler login. Every installed
+app (1.2.3 and later) checks every 4 hours and on start. It downloads a new
+version in the background and shows "Version x ready · Restart". If nobody
+clicks it, the update installs when the app is closed.
+
+Release a new version:
+
+```bash
+cd sgh-crm-electron
+# bump "version" in package.json, then:
+npm run dist:win          # builds dist-app/
+npm run publish-update    # uploads the installer + blockmap, then latest.yml
+```
+
+Test a build on your own machine first. Cafés only see a version after
+`publish-update`. Wrangler can upload files up to about 300 MB; the installer is
+about 230 MB.
+
 ## Restore a café on a new PC
 
 1. Install the app.

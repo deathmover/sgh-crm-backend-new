@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestj
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { CreateProductDto, RestockDto, UpdateProductDto } from './dto/product.dto';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @ApiTags('Snacks & Drinks')
 @ApiBearerAuth()
@@ -15,17 +16,23 @@ export class ProductsController {
     return this.productsService.findAll(includeInactive === 'true');
   }
 
+  @OwnerOnly()
+
   @Post()
   @ApiOperation({ summary: 'Add a menu item' })
   create(@Body() dto: CreateProductDto) {
     return this.productsService.create(dto);
   }
 
+  @OwnerOnly()
+
   @Patch(':id')
   @ApiOperation({ summary: 'Edit a menu item (name, price, cost, low-stock level)' })
   update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
     return this.productsService.update(id, dto);
   }
+
+  @OwnerOnly()
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a menu item (hidden instead if it has been sold)' })

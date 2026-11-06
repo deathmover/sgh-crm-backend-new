@@ -21,6 +21,8 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { BackupsModule } from './modules/backups/backups.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { OwnerOnlyGuard } from './modules/auth/guards/owner-only.guard';
+import { UsersModule } from './modules/users/users.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
@@ -46,6 +48,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     SettingsModule,
     ReportsModule,
     BackupsModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [
@@ -54,6 +57,11 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // After the JWT guard, so it can read the user's role
+    {
+      provide: APP_GUARD,
+      useClass: OwnerOnlyGuard,
     },
     {
       provide: APP_FILTER,

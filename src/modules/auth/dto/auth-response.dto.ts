@@ -9,5 +9,6 @@ export class AuthResponseDto {
     id: string;
     username: string;
     role: string;
+    mustChangePassword: boolean;
   };
 }

@@ -23,6 +23,7 @@ import type { Response } from 'express';
 import { PrismaService } from '../../config/database.config';
 import { BACKUP_KINDS, BackupKind, PENDING_RESTORE, backupDir, databasePath, newBackupName, parseBackupName } from './backup-files';
 import { CloudBackupService } from './cloud-backup';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -225,6 +226,7 @@ export class ConnectCloudDto {
 
 @ApiTags('Backups')
 @ApiBearerAuth()
+@OwnerOnly()
 @Controller('backups')
 export class BackupsController {
   constructor(

@@ -14,6 +14,7 @@ import { MembershipsService } from './memberships.service';
 import { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
 import { PurchaseMembershipDto } from './dto/purchase-membership.dto';
+import { OwnerOnly } from '../../common/decorators/owner-only.decorator';
 
 @Controller('memberships')
 @UseGuards(JwtAuthGuard)
@@ -30,6 +31,8 @@ export class MembershipsController {
 
   // ========== MEMBERSHIP PLANS ==========
 
+  @OwnerOnly()
+
   @Post('plans')
   createPlan(@Body() createDto: CreateMembershipPlanDto) {
     return this.membershipsService.createPlan(createDto);
@@ -45,10 +48,14 @@ export class MembershipsController {
     return this.membershipsService.findPlanById(id);
   }
 
+  @OwnerOnly()
+
   @Put('plans/:id')
   updatePlan(@Param('id') id: string, @Body() updateDto: UpdateMembershipPlanDto) {
     return this.membershipsService.updatePlan(id, updateDto);
   }
+
+  @OwnerOnly()
 
   @Delete('plans/:id')
   deletePlan(@Param('id') id: string) {
@@ -80,6 +87,8 @@ export class MembershipsController {
   ) {
     return this.membershipsService.getActiveMembership(customerId, machineType);
   }
+
+  @OwnerOnly()
 
   @Post(':id/cancel')
   cancelMembership(@Param('id') id: string, @Body('reason') reason?: string) {
