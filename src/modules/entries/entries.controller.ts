@@ -16,6 +16,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { EntriesService } from './entries.service';
 import { SetEntryItemsDto } from '../products/dto/product.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
+import { CreateGroupEntryDto } from './dto/create-group-entry.dto';
 import { UpdateEntryDto } from './dto/update-entry.dto';
 import { EndEntryDto } from './dto/end-entry.dto';
 import { EntryQueryDto } from './dto/entry-query.dto';
@@ -35,6 +36,12 @@ export class EntriesController {
   @ApiOperation({ summary: 'Create a new entry (start timer)' })
   create(@Body() createEntryDto: CreateEntryDto, @CurrentUser() user: AuthUser) {
     return this.entriesService.create(createEntryDto, user?.username);
+  }
+
+  @Post('group')
+  @ApiOperation({ summary: 'Start one entry per PC for a group under one customer (all or nothing)' })
+  createGroup(@Body() dto: CreateGroupEntryDto, @CurrentUser() user: AuthUser) {
+    return this.entriesService.createGroup(dto, user?.username);
   }
 
   @Get('export/csv')

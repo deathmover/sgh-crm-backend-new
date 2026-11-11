@@ -12,7 +12,12 @@ import { MachinesService } from '../machines/machines.service';
 import { MembershipsService } from '../memberships/memberships.service';
 import { ProductsService, type ItemLine } from '../products/products.service';
 import { EntryItemInputDto } from '../products/dto/product.dto';
+import { randomUUID } from 'node:crypto';
+import type { Entry } from '@prisma/client';
 import { CreateEntryDto } from './dto/create-entry.dto';
+import { CreateGroupEntryDto } from './dto/create-group-entry.dto';
+import { splitAdvance } from './group-split';
+import { isControllerPriced, sessionCost, type PricedMachine } from '../machines/pricing';
 import { EndEntryDto } from './dto/end-entry.dto';
 import { EntryQueryDto } from './dto/entry-query.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
@@ -252,6 +257,87 @@ export class EntriesService {
     }
 
     return created;
+  }
+
+  /**
+   * A group of players under one customer: one entry per PC, created together
+   * (all or nothing) and linked by a groupId. Each entry is billed, edited and
+   * ended on its own afterwards. Snacks go on the first PC; the advance is
+   * split across the PCs by bill.
+   */
+  async createGroup(dto: CreateGroupEntryDto, billedBy?: string) {
+    const { customerId, machineId, startTime, predefinedDuration, amountEach, discountEach, items, notes } = dto;
+
+    const seats = dto.seats.map((s) => ({ pcNumber: s.pcNumber.trim(), customerId: s.customerId || customerId }));
+    if (seats.some((s) => !s.pcNumber)) throw new BadRequestException('Every player needs a PC number');
+    const repeated = seats.map((s) => s.pcNumber).filter((pc, i, all) => all.indexOf(pc) !== i);
+    if (repeated.length) throw new BadRequestException(`PC ${repeated[0]} is picked twice`);
+
+    const machine = await this.prisma.machine.findUnique({ where: { id: machineId } });
+    if (!machine || !machine.isActive) throw new NotFoundException('Machine not found');
+    if (isControllerPriced(machine as unknown as PricedMachine)) {
+      throw new BadRequestException(`${machine.name} is billed by controllers; start one entry with the controller count instead`);
+    }
+
+    const customerIds = [...new Set(seats.map((s) => s.customerId))];
+    const found = await this.prisma.customer.count({ where: { id: { in: customerIds } } });
+    if (found !== customerIds.length) throw new NotFoundException('Customer not found');
+
+    const busy = await this.prisma.entry.findMany({
+      where: { machineId, endTime: null, isDeleted: false, pcNumber: { in: seats.map((s) => s.pcNumber) } },
+      select: { pcNumber: true, customer: { select: { name: true } } },
+    });
+    if (busy.length) {
+      const b = busy[0];
+      throw new BadRequestException(`PC ${b.pcNumber} is already in use${b.customer?.name ? ` by ${b.customer.name}` : ''}`);
+    }
+
+    const roundedDuration = predefinedDuration ? this.machinesService.roundDuration(predefinedDuration) : undefined;
+    const playCost = roundedDuration ? sessionCost(machine as unknown as PricedMachine, roundedDuration) : 0;
+    const playAmount = amountEach !== undefined ? amountEach : playCost;
+    const discount = discountEach || 0;
+    const groupId = randomUUID();
+
+    return this.prisma.$transaction(async (tx) => {
+      const itemLines = items?.length ? await this.productsService.buildLines(tx, items) : [];
+      const snacks = itemLines.reduce((sum, l) => sum + l.total, 0);
+
+      // Bills are only known up front when a duration is set (same as a single entry)
+      const bills = seats.map((_, i) => (roundedDuration ? Math.max(0, playAmount - discount) + (i === 0 ? snacks : 0) : 0));
+      const advance = splitAdvance(bills, dto.cashAmount || 0, dto.onlineAmount || 0, dto.creditAmount || 0);
+
+      const created: Entry[] = [];
+      for (const [i, seat] of seats.entries()) {
+        const paid = advance[i].cashAmount + advance[i].onlineAmount + advance[i].creditAmount;
+        const entry = await tx.entry.create({
+          data: {
+            customerId: seat.customerId,
+            machineId,
+            startTime: new Date(startTime),
+            predefinedDuration,
+            ...(roundedDuration && { duration: roundedDuration }),
+            roundedDuration,
+            cost: playCost || undefined,
+            discount,
+            billedBy,
+            beveragesAmount: i === 0 ? snacks : 0,
+            finalAmount: bills[i],
+            paymentType: 'cash',
+            ...advance[i],
+            ...(paid > 0 && { paymentStatus: 'partial' }),
+            pcNumber: seat.pcNumber,
+            groupId,
+            notes,
+          },
+        });
+        if (i === 0 && itemLines.length) {
+          await tx.entryItem.createMany({ data: itemLines.map((l) => ({ ...l, entryId: entry.id })) });
+          await this.productsService.applyStockDiff(tx, entry.id, [], itemLines);
+        }
+        created.push(entry);
+      }
+      return { groupId, count: created.length, entries: created };
+    });
   }
 
   async endEntry(id: string, endEntryDto: EndEntryDto, autoEnded = false, billedBy?: string) {

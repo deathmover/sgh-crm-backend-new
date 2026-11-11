@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { costFromRates, sessionCost, type ControllerRates, type PricedMachine } from './pricing';
 import { Prisma } from '@prisma/client';
+import { formatPcNumbers, parsePcNumbers } from './pc-numbers';
 import { PrismaService } from '../../config/database.config';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class MachinesService {
         name: true,
         type: true,
         units: true,
+        pcNumbers: true,
         hourlyRate: true,
         halfHourlyRate: true,
         packageRates: true,
@@ -81,6 +83,7 @@ export class MachinesService {
         name: true,
         type: true,
         units: true,
+        pcNumbers: true,
         hourlyRate: true,
         halfHourlyRate: true,
         packageRates: true,
@@ -102,6 +105,7 @@ export class MachinesService {
       name: machine.name,
       type: machine.type,
       units: machine.units,
+      pcNumbers: machine.pcNumbers,
       hourlyRate: machine.hourlyRate,
       halfHourlyRate: machine.halfHourlyRate,
       packageRates: machine.packageRates,
@@ -109,6 +113,60 @@ export class MachinesService {
       availableUnits: machine.units - machine.entries.length,
       isAvailable: machine.entries.length < machine.units,
     }));
+  }
+
+  /**
+   * PC numbers to offer when starting sessions on this machine, and which are
+   * in use right now. The numbers come from the last 90 days of sessions
+   * (cafés number PCs their own way, e.g. Ultra = 12–17); a machine with no
+   * history yet gets 1..units.
+   */
+  async getPcs(id: string) {
+    const machine = await this.findOne(id);
+    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const [used, running] = await Promise.all([
+      this.prisma.entry.groupBy({
+        by: ['pcNumber'],
+        where: { machineId: id, isDeleted: false, pcNumber: { not: null }, startTime: { gte: since } },
+        _count: { _all: true },
+      }),
+      this.prisma.entry.findMany({
+        where: { machineId: id, endTime: null, isDeleted: false, pcNumber: { not: null } },
+        select: { id: true, pcNumber: true, startTime: true, predefinedDuration: true, customer: { select: { name: true } } },
+      }),
+    ]);
+    const clean = (pc: string | null) => (pc ?? '').trim();
+    // Typos ("30" on a 15-PC machine, an Ultra PC number under Mid Pro) show up
+    // a handful of times; real PCs far more. Drop numbers used under 15% as often
+    // as the busiest one. Any other number can still be typed in.
+    const top = Math.max(0, ...used.map((u) => u._count._all));
+    const seen = used
+      .filter((u) => u._count._all >= top * 0.15)
+      .map((u) => clean(u.pcNumber))
+      .filter(Boolean);
+    // The owner's list in Settings wins; otherwise what the café has been typing
+    const configured = machine.pcNumbers ? parsePcNumbers(machine.pcNumbers).numbers : [];
+    const source = configured.length ? 'settings' : seen.length ? 'history' : 'default';
+    const base = configured.length ? configured : seen.length ? seen : Array.from({ length: Math.max(1, machine.units) }, (_, i) => String(i + 1));
+    const numbers = new Set(base);
+    for (const e of running) if (clean(e.pcNumber)) numbers.add(clean(e.pcNumber));
+    const byNumber = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
+
+    return {
+      machineId: id,
+      source,
+      numbers: [...numbers].sort(byNumber),
+      busy: running
+        .filter((e) => clean(e.pcNumber))
+        .map((e) => ({
+          pcNumber: clean(e.pcNumber),
+          entryId: e.id,
+          customerName: e.customer?.name ?? null,
+          startTime: e.startTime,
+          predefinedDuration: e.predefinedDuration,
+        }))
+        .sort((a, b) => byNumber(a.pcNumber, b.pcNumber)),
+    };
   }
 
   /** Cost for one unit at the machine's base rates (no controller pricing) */
@@ -151,12 +209,15 @@ export class MachinesService {
     hourlyRate: number;
     halfHourlyRate?: number;
     controllerRates?: ControllerRates;
+    pcNumbers?: string | null;
   }) {
+    const pcs = this.checkPcNumbers(createData.pcNumbers);
     return this.prisma.machine.create({
       data: {
         name: createData.name,
         type: createData.type,
-        units: createData.units,
+        units: pcs?.length || createData.units,
+        ...(pcs && { pcNumbers: formatPcNumbers(pcs) }),
         hourlyRate: createData.hourlyRate,
         halfHourlyRate: createData.halfHourlyRate || null,
         ...(createData.controllerRates && { controllerRates: cleanControllerRates(createData.controllerRates) }),
@@ -172,6 +233,8 @@ export class MachinesService {
       halfHourlyRate?: number | null;
       packageRates?: Record<string, number>;
       controllerRates?: ControllerRates | null;
+      /** "1-11"; units becomes its count. null or "" clears it. */
+      pcNumbers?: string | null;
     },
   ) {
     const machine = await this.findOne(id);
@@ -191,10 +254,24 @@ export class MachinesService {
       dataToUpdate.packageRates = updateData.packageRates;
     }
 
+    if (updateData.pcNumbers !== undefined) {
+      const pcs = this.checkPcNumbers(updateData.pcNumbers);
+      dataToUpdate.pcNumbers = pcs ? formatPcNumbers(pcs) : null;
+      if (pcs) dataToUpdate.units = pcs.length;
+    }
+
     return this.prisma.machine.update({
       where: { id },
       data: dataToUpdate,
     });
+  }
+
+  /** Parsed PC numbers, or null when blank. Bad input is a 400 naming the problem. */
+  private checkPcNumbers(text?: string | null): string[] | null {
+    if (!text?.trim()) return null;
+    const { numbers, error } = parsePcNumbers(text);
+    if (error) throw new BadRequestException(`PC numbers: ${error}`);
+    return numbers.length ? numbers : null;
   }
 
   /**

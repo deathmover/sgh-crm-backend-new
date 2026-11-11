@@ -29,6 +29,7 @@ export class MachinesController {
       hourlyRate: number;
       halfHourlyRate?: number;
       controllerRates?: ControllerRates;
+      pcNumbers?: string | null;
     },
   ) {
     return this.machinesService.create(createData);
@@ -54,6 +55,12 @@ export class MachinesController {
     return this.machinesService.findOne(id);
   }
 
+  @Get(':id/pcs')
+  @ApiOperation({ summary: 'PC numbers for this machine and which are in use now' })
+  getPcs(@Param('id') id: string) {
+    return this.machinesService.getPcs(id);
+  }
+
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get machine statistics' })
   getStats(@Param('id') id: string) {
@@ -72,6 +79,7 @@ export class MachinesController {
       halfHourlyRate?: number | null;
       packageRates?: Record<string, number>;
       controllerRates?: ControllerRates | null;
+      pcNumbers?: string | null;
     },
   ) {
     return this.machinesService.updateRates(id, updateData);

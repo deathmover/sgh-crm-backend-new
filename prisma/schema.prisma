@@ -52,6 +52,7 @@ model Machine {
   name           String
   type           String    // mid_pro | high_end | ultra | ps5 | simulator
   units          Int       @default(1)
+  pcNumbers      String?   // PC numbers on this machine, e.g. "1-11" or "12-17, 20"; units follows its count
   hourlyRate     Int
   halfHourlyRate Int?
   packageRates   Json?     // { "3": 130, "5": 200, "12": 500 } hours as keys
@@ -94,6 +95,7 @@ model Entry {
   deletedAt          DateTime?           // When it was deleted
   autoEnded          Boolean             @default(false) // True if session was auto-ended
   billedBy           String?             // Login that last set the bill (start, end or edit)
+  groupId            String?             // Entries started together for one group of players
   membershipId       String?             // Reference to membership used (if any)
   membership         CustomerMembership? @relation(fields: [membershipId], references: [id], onDelete: SetNull)
   membershipHours    Float?              // Hours deducted from membership (if used)
@@ -109,6 +111,7 @@ model Entry {
   @@index([paymentType])
   @@index([paymentStatus])
   @@index([isDeleted])
+  @@index([groupId])
   @@index([membershipId])
   @@map("entries")
 }
