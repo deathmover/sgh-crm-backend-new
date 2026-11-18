@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Parser } from 'json2csv';
 import * as XLSX from 'xlsx';
 import { Readable } from 'stream';
@@ -57,80 +58,36 @@ export class CustomersService {
   }
 
   async findAll(query: CustomerQueryDto) {
-    const { search, page = 1, limit = 20 } = query;
+    const { search, page = 1, limit = 20, hasCredit } = query;
     const skip = (page - 1) * limit;
+    const where = this.listWhere(search, hasCredit);
+    const select = { id: true, name: true, phone: true, email: true, pendingCredit: true, createdAt: true, updatedAt: true };
 
-    const where = search
-      ? {
-          OR: [
-            { name: { contains: search } },
-            { phone: { contains: search } },
-            { email: { contains: search } },
-          ],
-        }
-      : {};
+    if (hasCredit) {
+      // Credit is summed per customer, so sort by it and page in memory; only
+      // customers who owe are loaded, which stays a short list
+      const owing = (await this.withCredit(await this.prisma.customer.findMany({ where, select })))
+        .filter((c) => c.pendingCredit > 0)
+        .sort((a, b) => b.pendingCredit - a.pendingCredit || a.name.localeCompare(b.name));
+      return {
+        data: owing.slice(skip, skip + limit),
+        meta: {
+          total: owing.length,
+          page,
+          limit,
+          totalPages: Math.ceil(owing.length / limit),
+          totalCredit: owing.reduce((sum, c) => sum + c.pendingCredit, 0),
+        },
+      };
+    }
 
     const [customers, total] = await Promise.all([
-      this.prisma.customer.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          name: true,
-          phone: true,
-          email: true,
-          pendingCredit: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      }),
+      this.prisma.customer.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' }, select }),
       this.prisma.customer.count({ where }),
     ]);
 
-    // Calculate total pending credit (Manual + Entry-based)
-    // pendingCredit field = manual credit balance set by admin
-    // entry credits = unpaid amounts from gaming sessions
-
-    // OPTIMIZATION: Use a single aggregation query instead of N queries
-    const customerIds = customers.map(c => c.id);
-    const customerCreditMap = new Map<string, number>();
-
-    if (customerIds.length > 0) {
-      const creditStats = await this.prisma.entry.groupBy({
-        by: ['customerId'],
-        where: {
-          customerId: { in: customerIds },
-          creditAmount: { gt: 0 },
-          isDeleted: false,
-        },
-        _sum: { creditAmount: true },
-      });
-
-      creditStats.forEach((stat) => {
-        if (stat.customerId) {
-          customerCreditMap.set(stat.customerId, stat._sum.creditAmount || 0);
-        }
-      });
-    }
-
-    // Map credits to customers
-    const customersWithCredit = customers.map((customer) => {
-      const entryCredit = customerCreditMap.get(customer.id) || 0;
-      const manualCredit = customer.pendingCredit || 0;
-      const totalCredit = manualCredit + entryCredit;
-
-      return {
-        ...customer,
-        pendingCredit: totalCredit,
-        manualCredit: manualCredit,
-        entryCredit: entryCredit,
-      };
-    });
-
     return {
-      data: customersWithCredit,
+      data: await this.withCredit(customers),
       meta: {
         total,
         page,
@@ -138,6 +95,42 @@ export class CustomersService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /** Search by name/phone/email, and optionally only customers with something owed. */
+  private listWhere(search?: string, hasCredit?: boolean): Prisma.CustomerWhereInput {
+    const and: Prisma.CustomerWhereInput[] = [];
+    if (search) {
+      and.push({ OR: [{ name: { contains: search } }, { phone: { contains: search } }, { email: { contains: search } }] });
+    }
+    if (hasCredit) {
+      and.push({
+        OR: [{ pendingCredit: { gt: 0 } }, { entries: { some: { creditAmount: { gt: 0 }, isDeleted: false } } }],
+      });
+    }
+    return and.length ? { AND: and } : {};
+  }
+
+  /**
+   * Total pending credit per customer: the manual/imported balance on the
+   * customer plus unpaid credit on their sessions (paying credit reduces the
+   * sessions' creditAmount). One grouped query for the whole list.
+   */
+  private async withCredit<T extends { id: string; pendingCredit: number | null }>(customers: T[]) {
+    const credit = new Map<string, number>();
+    if (customers.length) {
+      const stats = await this.prisma.entry.groupBy({
+        by: ['customerId'],
+        where: { customerId: { in: customers.map((c) => c.id) }, creditAmount: { gt: 0 }, isDeleted: false },
+        _sum: { creditAmount: true },
+      });
+      for (const st of stats) credit.set(st.customerId, st._sum.creditAmount || 0);
+    }
+    return customers.map((customer) => {
+      const entryCredit = credit.get(customer.id) || 0;
+      const manualCredit = customer.pendingCredit || 0;
+      return { ...customer, pendingCredit: manualCredit + entryCredit, manualCredit, entryCredit };
+    });
   }
 
   async findOne(id: string) {
@@ -409,28 +402,23 @@ export class CustomersService {
   }
 
   async exportToCsv(query: CustomerQueryDto): Promise<string> {
-    const { search } = query;
-
-    const where = search
-      ? {
-          OR: [
-            { name: { contains: search } },
-            { phone: { contains: search } },
-            { email: { contains: search } },
-          ],
-        }
-      : {};
+    const { search, hasCredit } = query;
+    const where = this.listWhere(search, hasCredit);
 
     // Get all customers (no pagination for export)
-    const customers = await this.prisma.customer.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        _count: {
-          select: { entries: true },
+    let customers = await this.withCredit(
+      await this.prisma.customer.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          _count: {
+            select: { entries: true },
+          },
         },
-      },
-    });
+      }),
+    );
+    // The credit list is exported in the same order as on screen: who owes most first
+    if (hasCredit) customers = customers.filter((c) => c.pendingCredit > 0).sort((a, b) => b.pendingCredit - a.pendingCredit);
 
     // Calculate total spent for each customer
     const customersWithStats = await Promise.all(
@@ -444,6 +432,7 @@ export class CustomersService {
           Name: customer.name,
           Phone: customer.phone || '',
           Email: customer.email || '',
+          // Manual balance + unpaid session credit, the same figure as the customer list
           'Pending Credit': customer.pendingCredit,
           'Total Visits': customer._count.entries,
           'Total Spent': stats._sum.finalAmount || 0,
