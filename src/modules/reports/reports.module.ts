@@ -66,6 +66,12 @@ export class InsightsController {
     return this.insights.occupancy(startDate, endDate);
   }
 
+  @Get('pcs')
+  @ApiOperation({ summary: 'Usage of each PC: hours, occupancy, money, peak hour, top customers' })
+  pcs(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.insights.pcs(startDate, endDate);
+  }
+
   @Get('pricing')
   @ApiOperation({ summary: 'Hourly vs package vs membership sessions, packages sold, discounts by login' })
   @ApiQuery(START_DATE)

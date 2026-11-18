@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../config/database.config';
 import { dateRange, startOfLocalDay, toLocalDateKey } from '../../common/utils/date-range';
 import { isControllerPriced, pricingBreakdown, type PricedMachine } from '../machines/pricing';
+import { parsePcNumbers } from '../machines/pc-numbers';
 import { SettingsService } from '../settings/settings.module';
 import { ReportsService } from './reports.service';
 
@@ -210,6 +211,226 @@ export class InsightsService {
         const used = minutes.flat().reduce((s, v) => s + v, 0);
         return { id: m.id, name: m.name, type: m.type, units: m.units, minutes, hoursUsed: round2(used / 60) };
       }),
+    };
+  }
+
+  /**
+   * Usage of every single PC (and each console as one unit) in the range:
+   * hours, sessions, how full it was during open hours, money, when it's
+   * used and by whom. PCs listed in Settings appear even if nobody used them.
+   *
+   * "Open hours" are the hours of the day when the café is normally busy: an
+   * hour counts if any machine was in use then on at least half of the days
+   * the café had sessions. Occupancy = hours played ÷ (days × open hours).
+   */
+  async pcs(startDate?: string, endDate?: string) {
+    const { range, period } = resolveRange(startDate, endDate);
+    const now = new Date();
+    const end = Math.min(range.lte.getTime(), now.getTime());
+    const [machines, entries] = await Promise.all([
+      this.prisma.machine.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, type: true, units: true, pcNumbers: true, controllerRates: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.entry.findMany({
+        where: { isDeleted: false, startTime: range },
+        select: {
+          id: true,
+          machineId: true,
+          pcNumber: true,
+          startTime: true,
+          endTime: true,
+          duration: true,
+          finalAmount: true,
+          beveragesAmount: true,
+          membershipId: true,
+          customerId: true,
+          customer: { select: { name: true } },
+        },
+        orderBy: { startTime: 'desc' },
+      }),
+    ]);
+
+    type Unit = {
+      key: string;
+      machineId: string;
+      machineName: string;
+      machineType: string;
+      pcNumber: string | null;
+      label: string;
+      isConsole: boolean;
+      listed: boolean;
+      sessions: number;
+      minutes: number;
+      revenue: number;
+      snacks: number;
+      memberSessions: number;
+      longest: number;
+      lastUsed: Date | null;
+      days: Map<string, number>;
+      hourly: number[];
+      customers: Map<string, { name: string; minutes: number; sessions: number }>;
+      recent: { id: string; start: string; customer: string; minutes: number; amount: number; running: boolean }[];
+    };
+    const byMachine = new Map(machines.map((m) => [m.id, m]));
+    const units = new Map<string, Unit>();
+    // Consoles keep the controller count in the PC field, and a single simulator
+    // has nothing to tell apart: both count as one unit
+    const PC_TYPES = ['mid_pro', 'high_end', 'ultra', 'pc'];
+    const isSingle = (m: (typeof machines)[number]) =>
+      isControllerPriced(m as unknown as PricedMachine) || (!m.pcNumbers && m.units === 1 && !PC_TYPES.includes(m.type));
+    const unit = (m: (typeof machines)[number], pc: string | null, listed: boolean) => {
+      const console = isSingle(m);
+      const key = console ? m.id : `${m.id}:${pc ?? ''}`;
+      let u = units.get(key);
+      if (!u) {
+        u = {
+          key,
+          machineId: m.id,
+          machineName: m.name,
+          machineType: m.type,
+          pcNumber: console ? null : pc,
+          label: console ? m.name : pc ? `PC ${pc}` : 'No PC number',
+          isConsole: console,
+          listed,
+          sessions: 0,
+          minutes: 0,
+          revenue: 0,
+          snacks: 0,
+          memberSessions: 0,
+          longest: 0,
+          lastUsed: null,
+          days: new Map(),
+          hourly: new Array<number>(24).fill(0),
+          customers: new Map(),
+          recent: [],
+        };
+        units.set(key, u);
+      }
+      return u;
+    };
+
+    // Every PC the owner listed in Settings, so idle PCs show up with zero use
+    for (const m of machines) {
+      if (isSingle(m)) continue;
+      for (const pc of m.pcNumbers ? parsePcNumbers(m.pcNumbers).numbers : []) unit(m, pc, true);
+    }
+
+    const busy = new Map<number, Set<string>>(); // hour of day → days the café was in use then
+    const activeDays = new Set<string>();
+    for (const e of entries) {
+      const m = byMachine.get(e.machineId);
+      if (!m) continue;
+      const pc = (e.pcNumber ?? '').trim();
+      const pcKey = /^\d+$/.test(pc) ? String(Number(pc)) : pc;
+      const listed = isSingle(m) || (m.pcNumbers ? parsePcNumbers(m.pcNumbers).numbers.includes(pcKey) : !!pcKey);
+      const u = unit(m, pcKey || null, listed);
+
+      const start = e.startTime.getTime();
+      const stop = Math.min(e.endTime ? e.endTime.getTime() : e.duration ? start + e.duration * 60_000 : now.getTime(), end);
+      const minutes = Math.max(0, (stop - start) / 60_000);
+      u.sessions += 1;
+      u.minutes += minutes;
+      u.revenue += e.finalAmount || 0;
+      u.snacks += e.beveragesAmount || 0;
+      if (e.membershipId) u.memberSessions += 1;
+      u.longest = Math.max(u.longest, minutes);
+      if (!u.lastUsed || e.startTime > u.lastUsed) u.lastUsed = e.startTime;
+      const who = u.customers.get(e.customerId) ?? { name: e.customer?.name ?? 'Customer', minutes: 0, sessions: 0 };
+      who.minutes += minutes;
+      who.sessions += 1;
+      u.customers.set(e.customerId, who);
+      if (u.recent.length < 10) {
+        u.recent.push({
+          id: e.id,
+          start: e.startTime.toISOString(),
+          customer: e.customer?.name ?? 'Customer',
+          minutes: Math.round(minutes),
+          amount: e.finalAmount || 0,
+          running: !e.endTime,
+        });
+      }
+      // Credit the minutes to each day and hour they fall in
+      for (let t = start; t < stop; ) {
+        const slot = new Date(t);
+        const next = new Date(slot);
+        next.setMinutes(0, 0, 0);
+        next.setHours(next.getHours() + 1);
+        const upto = Math.min(next.getTime(), stop);
+        const day = toLocalDateKey(slot);
+        u.days.set(day, (u.days.get(day) ?? 0) + (upto - t) / 60_000);
+        u.hourly[slot.getHours()] += (upto - t) / 60_000;
+        if (!busy.has(slot.getHours())) busy.set(slot.getHours(), new Set());
+        busy.get(slot.getHours())!.add(day);
+        activeDays.add(day);
+        t = upto;
+      }
+    }
+
+    const openHours = [...busy.entries()]
+      .filter(([, days]) => days.size >= Math.max(1, activeDays.size / 2))
+      .map(([h]) => h)
+      .sort((a, b) => a - b);
+    // Days in the range up to today
+    const days = Math.max(1, daysBetween(range.gte, new Date(end)) + 1);
+    const capacity = days * Math.max(1, openHours.length) * 60;
+    const dayKeys: string[] = [];
+    for (let t = startOfLocalDay(range.gte).getTime(); t <= end; t += DAY_MS) dayKeys.push(toLocalDateKey(new Date(t + DAY_MS / 2)));
+    const today = startOfLocalDay(now);
+
+    const list = [...units.values()].map((u) => {
+      const peak = u.hourly.reduce((best, v, h) => (v > u.hourly[best] ? h : best), 0);
+      return {
+        key: u.key,
+        machineId: u.machineId,
+        machineName: u.machineName,
+        machineType: u.machineType,
+        pcNumber: u.pcNumber,
+        label: u.label,
+        /** One unit for the whole machine (consoles, a single simulator) */
+        isConsole: u.isConsole,
+        /** false: a number used in sessions that isn't in the machine's PC list (often a typo) */
+        listed: u.listed,
+        sessions: u.sessions,
+        hours: round2(u.minutes / 60),
+        occupancy: pct(u.minutes, capacity),
+        revenue: Math.round(u.revenue),
+        snacks: Math.round(u.snacks),
+        memberSessions: u.memberSessions,
+        avgSessionMinutes: u.sessions ? Math.round(u.minutes / u.sessions) : 0,
+        longestMinutes: Math.round(u.longest),
+        daysUsed: u.days.size,
+        lastUsed: u.lastUsed?.toISOString() ?? null,
+        idleDays: u.lastUsed ? daysBetween(u.lastUsed, today) : null,
+        peakHour: u.minutes > 0 ? peak : null,
+        hourly: u.hourly.map((v) => round2(v / 60)),
+        daily: dayKeys.map((date) => ({ date, hours: round2((u.days.get(date) ?? 0) / 60) })),
+        topCustomers: [...u.customers.values()]
+          .sort((a, b) => b.minutes - a.minutes)
+          .slice(0, 5)
+          .map((c) => ({ name: c.name, hours: round2(c.minutes / 60), sessions: c.sessions })),
+        recent: u.recent,
+      };
+    });
+    const byNumber = (a: string | null, b: string | null) => (a ?? '').localeCompare(b ?? '', undefined, { numeric: true });
+    list.sort((a, b) => a.machineName.localeCompare(b.machineName) || byNumber(a.pcNumber, b.pcNumber));
+
+    const pcsOnly = list.filter((u) => !u.isConsole && u.listed);
+    const totalHours = list.reduce((s, u) => s + u.hours, 0);
+    return {
+      period,
+      days,
+      openHours: { hours: openHours, perDay: openHours.length },
+      totals: {
+        units: list.length,
+        hours: round2(totalHours),
+        sessions: list.reduce((s, u) => s + u.sessions, 0),
+        revenue: list.reduce((s, u) => s + u.revenue, 0),
+        avgOccupancy: pcsOnly.length ? round2(pcsOnly.reduce((s, u) => s + u.occupancy, 0) / pcsOnly.length) : 0,
+        unusedPcs: pcsOnly.filter((u) => u.sessions === 0).length,
+      },
+      units: list,
     };
   }
 
