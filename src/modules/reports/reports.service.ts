@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../config/database.config';
 import { dateRange, dayRange, toLocalDateKey } from '../../common/utils/date-range';
 import { getOtherCollections } from '../../common/utils/collections';
+import { membershipSplit } from '../../common/utils/membership-money';
 import { SettingsService } from '../settings/settings.module';
 
 type Range = { gte: Date; lte: Date };
@@ -45,7 +46,7 @@ export class ReportsService {
       }),
       this.prisma.customerMembership.findMany({
         where: { purchaseDate: range, status: { not: 'cancelled' } },
-        select: { paymentAmount: true, paymentMode: true, purchaseDate: true },
+        select: { paymentAmount: true, paymentMode: true, cashAmount: true, onlineAmount: true, purchaseDate: true },
       }),
       this.prisma.expense.findMany({
         where: { date: range },
@@ -210,7 +211,7 @@ export class ReportsService {
     const sessionCash = sum('sessionCash');
     const sessionOnline = sum('sessionOnline');
     const creditCollectedCash = creditPayments.reduce((s, p) => s + p.cashAmount, 0);
-    const membershipCash = memberships.filter((m) => m.paymentMode === 'cash').reduce((s, m) => s + m.paymentAmount, 0);
+    const membershipCash = memberships.reduce((s, m) => s + membershipSplit(m).cash, 0);
     const totalIncome = sum('income');
     const totalExpenses = sum('expenses');
     const snacks = this.summarizeItems(items);

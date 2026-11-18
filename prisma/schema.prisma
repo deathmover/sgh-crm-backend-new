@@ -224,7 +224,9 @@ model CustomerMembership {
   hoursUsed        Float          @default(0) // Hours consumed
   status           String         @default("active") // active | expired | exhausted | cancelled
   paymentAmount    Float          // Amount paid for this membership
-  paymentMode      String         @default("cash") // cash | online
+  paymentMode      String         @default("cash") // cash | online | split
+  cashAmount       Float?         // Part paid in cash; null on memberships sold before split payments
+  onlineAmount     Float?         // Part paid online
   notes            String?
   cancelledAt      DateTime?      // If membership was cancelled
   cancelReason     String?        // Why it was cancelled

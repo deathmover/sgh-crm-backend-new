@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { membershipSplit } from './membership-money';
 
 type Range = { gte: Date; lte: Date };
 
@@ -27,11 +28,10 @@ export async function getOtherCollections(prisma: PrismaClient, range: Range): P
       where: { createdAt: range, addedToEntryTotals: false },
       _sum: { cashAmount: true, onlineAmount: true },
     }),
-    prisma.customerMembership.groupBy({
-      by: ['paymentMode'],
+    prisma.customerMembership.findMany({
       // Cancelled memberships are treated as refunded
       where: { purchaseDate: range, status: { not: 'cancelled' } },
-      _sum: { paymentAmount: true },
+      select: { paymentAmount: true, paymentMode: true, cashAmount: true, onlineAmount: true },
     }),
   ]);
 
@@ -39,10 +39,10 @@ export async function getOtherCollections(prisma: PrismaClient, range: Range): P
   const creditOnline = credit._sum.onlineAmount || 0;
   let membershipCash = 0;
   let membershipOnline = 0;
-  for (const row of memberships) {
-    const amount = row._sum.paymentAmount || 0;
-    if (row.paymentMode === 'cash') membershipCash += amount;
-    else membershipOnline += amount;
+  for (const m of memberships) {
+    const { cash, online } = membershipSplit(m);
+    membershipCash += cash;
+    membershipOnline += online;
   }
 
   const cash = creditCash + membershipCash;

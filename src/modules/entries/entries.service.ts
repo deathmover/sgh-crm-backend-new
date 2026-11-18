@@ -23,6 +23,7 @@ import { EntryQueryDto } from './dto/entry-query.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { dayRange, dateRange } from '../../common/utils/date-range';
 import { getOtherCollections } from '../../common/utils/collections';
+import { membershipSplit } from '../../common/utils/membership-money';
 
 const paymentStatusFor = (totalPaid: number, finalAmount: number) =>
   totalPaid >= finalAmount ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid';
@@ -792,6 +793,8 @@ export class EntriesService {
           planName: m.plan?.name,
           paymentMode: m.paymentMode,
           paymentAmount: m.paymentAmount,
+          cashAmount: membershipSplit(m).cash,
+          onlineAmount: membershipSplit(m).online,
           purchaseDate: m.purchaseDate,
         })),
       },

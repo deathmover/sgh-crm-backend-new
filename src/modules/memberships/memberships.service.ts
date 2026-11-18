@@ -123,6 +123,9 @@ export class MembershipsService {
       throw new NotFoundException(`Customer with ID ${purchaseDto.customerId} not found`);
     }
 
+    // How it was paid: cash, online, or split between them
+    const { paymentAmount, paymentMode, cashAmount, onlineAmount } = this.paymentParts(purchaseDto, plan.price);
+
     // Calculate expiry date
     const purchaseDate = new Date();
     const expiryDate = new Date(purchaseDate);
@@ -139,8 +142,10 @@ export class MembershipsService {
         hoursRemaining: plan.hours,
         hoursUsed: 0,
         status: 'active',
-        paymentAmount: purchaseDto.paymentAmount ?? plan.price, // `||` turned a ₹0 complimentary plan into full price
-        paymentMode: purchaseDto.paymentMode || 'cash',
+        paymentAmount,
+        paymentMode,
+        cashAmount,
+        onlineAmount,
         notes: purchaseDto.notes,
         createdBy: purchaseDto.createdBy,
       },
@@ -151,6 +156,36 @@ export class MembershipsService {
     });
 
     return membership;
+  }
+
+  /**
+   * Cash and online parts of a membership sale. When the parts are given they
+   * must add up to the amount (or set it, when no amount is given); otherwise
+   * the whole amount goes to the chosen mode.
+   */
+  private paymentParts(dto: PurchaseMembershipDto, planPrice: number) {
+    const hasParts = dto.cashAmount !== undefined || dto.onlineAmount !== undefined;
+    if (!hasParts) {
+      // `??` keeps a ₹0 complimentary plan at ₹0 (`||` turned it into full price)
+      const paymentAmount = dto.paymentAmount ?? planPrice;
+      const online = dto.paymentMode === 'online';
+      return {
+        paymentAmount,
+        paymentMode: online ? 'online' : 'cash',
+        cashAmount: online ? 0 : paymentAmount,
+        onlineAmount: online ? paymentAmount : 0,
+      };
+    }
+    const cashAmount = dto.cashAmount ?? 0;
+    const onlineAmount = dto.onlineAmount ?? 0;
+    const paymentAmount = dto.paymentAmount ?? cashAmount + onlineAmount;
+    if (Math.abs(cashAmount + onlineAmount - paymentAmount) > 0.005) {
+      throw new BadRequestException(
+        `Cash ₹${cashAmount} + online ₹${onlineAmount} = ₹${cashAmount + onlineAmount}, but the membership is ₹${paymentAmount}`,
+      );
+    }
+    const paymentMode = cashAmount > 0 && onlineAmount > 0 ? 'split' : onlineAmount > 0 ? 'online' : 'cash';
+    return { paymentAmount, paymentMode, cashAmount, onlineAmount };
   }
 
   async getCustomerMemberships(customerId: string, activeOnly = false) {
