@@ -689,34 +689,18 @@ export class EntriesService {
     // Get active entries count
     const activeEntries = enrichedEntries.filter((entry) => !entry.endTime).length;
 
-    // Get payment breakdown - using split payment fields
-    const [cashData, onlineData, creditData] = await Promise.all([
-      this.prisma.entry.aggregate({
-        where: {
-          ...dateFilter,
-          endTime: { not: null },
-        },
-        _sum: { cashAmount: true },
-      }),
-      this.prisma.entry.aggregate({
-        where: {
-          ...dateFilter,
-          endTime: { not: null },
-        },
-        _sum: { onlineAmount: true },
-      }),
-      this.prisma.entry.aggregate({
-        where: {
-          ...dateFilter,
-          endTime: { not: null },
-        },
-        _sum: { creditAmount: true },
-      }),
-    ]);
+    // Money taken for the day's sessions, including advances on sessions still
+    // running: that cash is already in the drawer, and those bills already count
+    // in the day's revenue and "to collect" (leaving them out made Collected
+    // lower than the drawer until every session had ended)
+    const paid = await this.prisma.entry.aggregate({
+      where: dateFilter,
+      _sum: { cashAmount: true, onlineAmount: true, creditAmount: true },
+    });
 
-    const sessionCash = cashData._sum.cashAmount || 0;
-    const sessionOnline = onlineData._sum.onlineAmount || 0;
-    const creditRevenue = creditData._sum.creditAmount || 0;
+    const sessionCash = paid._sum.cashAmount || 0;
+    const sessionOnline = paid._sum.onlineAmount || 0;
+    const creditRevenue = paid._sum.creditAmount || 0;
 
     // Credit settled and memberships sold today are real money in the drawer today
     const [other, creditPayments, membershipSales] = await Promise.all([
